@@ -1,0 +1,12 @@
+# Rust build output
+/target/
+
+# generated settings file (the game writes it when %APPDATA% is not writable)
+/tapa-settings.conf
+
+# editor / OS noise
+*.pdb
+*.user
+.vscode/
+.idea/
+Thumbs.db
