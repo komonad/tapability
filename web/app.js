@@ -485,8 +485,9 @@ function render() {
   }
   outlineGroup(ctx, errors, C.errorOutline, 2);
 
-  // hover
-  if (ui.hover >= 0 && !ui.clues.has(ui.hover) && !showSolution) {
+  // hover marker: on a touch screen it stays on the last tapped cell, because
+  // there is no cursor to show where the finger was
+  if (ui.hover >= 0 && ui.hover < n && !ui.clues.has(ui.hover) && !showSolution) {
     const x = (ui.hover % cols) * cell;
     const y = Math.floor(ui.hover / cols) * cell;
     ctx.strokeStyle = C.hover;
@@ -718,14 +719,13 @@ els.canvas.addEventListener("pointermove", (event) => {
 });
 
 function endStroke(event) {
-  // a touch screen has no hover, and a lingering outline would cut through a
-  // wall group, so the marker is dropped as soon as the finger lifts
-  const touch = Boolean(event && event.pointerType === "touch");
   if (ui.tap) {
-    // a tap that never travelled: cycle the mark (or step a clue)
+    // a tap that never travelled: cycle the mark (or step a clue). The outline
+    // stays on the tapped cell on purpose - a touch screen has no cursor, so
+    // this is how the last cell you touched stays marked out.
     const cell = ui.tap.cell;
     ui.tap = null;
-    ui.hover = touch ? -1 : cell;
+    ui.hover = cell;
     fire(`tap ${cell % ui.cols} ${Math.floor(cell / ui.cols)}`);
     render();
     return;
@@ -734,7 +734,7 @@ function endStroke(event) {
   ui.painting = false;
   fire("paint end");
   if (event) {
-    ui.hover = touch ? -1 : cellAt(event);
+    ui.hover = cellAt(event);
     render();
   }
 }
@@ -746,7 +746,10 @@ function cancelStroke() {
 
 els.canvas.addEventListener("pointerup", endStroke);
 els.canvas.addEventListener("pointercancel", cancelStroke);
-els.canvas.addEventListener("pointerleave", () => {
+els.canvas.addEventListener("pointerleave", (event) => {
+  // a finger that lifts leaves the element too, but the outline is meant to
+  // stay on the last tapped cell
+  if (event.pointerType === "touch") return;
   if (ui.hover !== -1) {
     ui.hover = -1;
     render();

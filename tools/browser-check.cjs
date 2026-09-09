@@ -463,7 +463,8 @@ async function main() {
         let ok = true;
         for (let dy = 0; dy < 3 && ok; dy += 1) {
           for (let dx = 0; dx < 3 && ok; dx += 1) {
-            if (ui.clues.has((y + dy) * ui.cols + x + dx)) ok = false;
+            const i = (y + dy) * ui.cols + x + dx;
+            if (ui.clues.has(i) || ui.cells[i] !== 0) ok = false;
           }
         }
         if (ok) return { x, y };
@@ -823,9 +824,27 @@ async function main() {
     String(await evaluate(`ui.cells[${touchCell}]`)),
   );
   check(
-    "a tap leaves no lingering hover box",
-    (await evaluate(`ui.hover`)) === -1,
-    String(await evaluate(`ui.hover`)),
+    "a tap leaves the outline on the tapped cell",
+    (await evaluate(`ui.hover`)) === touchCell,
+    `${await evaluate(`ui.hover`)} vs ${touchCell}`,
+  );
+  const outline = await evaluate(`(() => {
+    const ctx = document.getElementById("board").getContext("2d");
+    const dpr = ui.dpr, cell = ui.cell;
+    const x = (${touchCell} % ui.cols) * cell, y = Math.floor(${touchCell} / ui.cols) * cell;
+    const data = ctx.getImageData(Math.round(x * dpr), Math.round(y * dpr), Math.round(cell * dpr), Math.round(cell * dpr)).data;
+    let found = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (Math.abs(data[i] - 58) < 30 && Math.abs(data[i + 1] - 130) < 30 && Math.abs(data[i + 2] - 226) < 40) {
+        found += 1;
+      }
+    }
+    return { found, cell };
+  })()`);
+  check(
+    "the outline is drawn around the tapped cell",
+    outline.found > outline.cell,
+    JSON.stringify(outline),
   );
 
   // a finger that travels is a stroke, not a tap

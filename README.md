@@ -50,7 +50,7 @@ Fill every cell black or white:
 | Alt + left click a clue | the same, for mice and trackpads without a middle button |
 | drag the size slider | pick a board size; the puzzle is rebuilt when you release it |
 | resize the window | the grid rescales to fill the space left of the control column |
-| tap a cell (touch) | cycles the mark: wall -> empty -> unmarked |
+| tap a cell (touch) | cycles the mark: wall -> empty -> unmarked; the outline stays on the last tapped cell, since a finger has no cursor |
 | drag a finger (touch) | paints a stroke; the first cell decides whether it marks or clears |
 | tap a clue (touch) | steps that one clue, like a middle click |
 | Shift + hover | spotlight the wall group under the cursor |
@@ -203,6 +203,7 @@ middle button is needed.
 |---|---|
 | left click wall / right click empty / click again to clear | canvas pointer events |
 | tap a cell to cycle wall -> empty -> clear, drag to paint | `tap` command, `TAP_MOVE_PX` in `web/app.js` |
+| the last tapped cell keeps its outline (touch has no cursor) | `pointerleave` ignores touch pointers |
 | tap a clue to step it | `tap` falls through to `cluestep` |
 | drag a whole stroke, gaps filled in | `line_cells` in the engine |
 | wall-group spotlight on paint, and on Shift + hover | `floodFill` in `web/app.js` |
