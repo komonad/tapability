@@ -4,6 +4,9 @@
 # generated settings file (the game writes it when %APPDATA% is not writable)
 /tapa-settings.conf
 
+# screenshot written by tools/browser-check.cjs
+/web-check.png
+
 # editor / OS noise
 *.pdb
 *.user

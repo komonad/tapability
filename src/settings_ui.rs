@@ -1,4 +1,4 @@
-﻿//! The always-visible control column on the right of the game window.
+//! The always-visible control column on the right of the game window.
 //!
 //! Every action the game has (new puzzle, clear, check, solution, undo) is a
 //! button here, and the generation settings are editable in place. The controls
@@ -12,7 +12,7 @@ use winapi::shared::windef::{HBRUSH, HDC, HWND};
 use winapi::um::wingdi::{GetStockObject, SetBkColor, SetBkMode, WHITE_BRUSH};
 use winapi::um::winuser::*;
 
-use crate::config::{Settings, FIELDS};
+use tapa_core::config::{Settings, FIELDS};
 use crate::render::{HEADER, PANEL_W};
 use crate::window::App;
 

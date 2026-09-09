@@ -1,4 +1,4 @@
-﻿//! Core Tapa model: grid geometry, cell states, clue encoding and validation.
+//! Core Tapa model: grid geometry, cell states, clue encoding and validation.
 //!
 //! Tapa rules implemented here:
 //!   * a clue cell is never black;
@@ -406,6 +406,37 @@ fn components<F: Fn(u8) -> bool>(grid: &Grid, marks: &[u8], keep: F, id: &mut [u
         count += 1;
     }
     count
+}
+
+/// Cells on the line between two cells, inclusive of both ends. Used so a
+/// quick drag paints every cell the cursor crossed instead of leaving gaps.
+pub fn line_cells(grid: &Grid, from: usize, to: usize) -> Vec<usize> {
+    let (x0, y0) = grid.xy(from);
+    let (x1, y1) = grid.xy(to);
+    let (mut x, mut y) = (x0 as i32, y0 as i32);
+    let (tx, ty) = (x1 as i32, y1 as i32);
+    let dx = (tx - x).abs();
+    let dy = (ty - y).abs();
+    let sx = if x < tx { 1 } else { -1 };
+    let sy = if y < ty { 1 } else { -1 };
+    let mut err = dx - dy;
+    let mut out = Vec::with_capacity((dx + dy) as usize + 1);
+    loop {
+        out.push(grid.idx(x as usize, y as usize));
+        if x == tx && y == ty {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            x += sx;
+        }
+        if e2 < dx {
+            err += dx;
+            y += sy;
+        }
+    }
+    out
 }
 
 /// The orthogonally connected wall group containing `start`.

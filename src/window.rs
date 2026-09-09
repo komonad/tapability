@@ -1,4 +1,4 @@
-﻿//! Win32 window, application state and input handling.
+//! Win32 window, application state and input handling.
 
 use std::collections::VecDeque;
 use std::mem;
@@ -12,9 +12,9 @@ use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::winuser::*;
 
-use crate::config::Settings;
-use crate::model::{
-    live_errors, validate, wall_component, LiveErrors, Puzzle, BLACK, UNKNOWN, WHITE,
+use tapa_core::config::Settings;
+use tapa_core::model::{
+    line_cells, live_errors, validate, wall_component, LiveErrors, Puzzle, BLACK, UNKNOWN, WHITE,
 };
 use crate::render::{self, Gfx};
 use crate::settings_ui;
@@ -273,8 +273,8 @@ impl App {
             self.status_kind = StatusKind::Info;
             return;
         };
-        let step = crate::model::clue_step(&puzzle.grid, &self.cells, cell, clue);
-        let satisfiable = crate::model::clue_satisfiable(&puzzle.grid, &self.cells, cell, clue);
+        let step = tapa_core::model::clue_step(&puzzle.grid, &self.cells, cell, clue);
+        let satisfiable = tapa_core::model::clue_satisfiable(&puzzle.grid, &self.cells, cell, clue);
         let (x0, y0) = puzzle.grid.xy(cell);
 
         if !satisfiable {
@@ -302,7 +302,7 @@ impl App {
             let Some(puzzle) = self.puzzle.as_ref() else {
                 return;
             };
-            crate::model::clue_deductions(&puzzle.grid, &self.cells, &puzzle.clues)
+            tapa_core::model::clue_deductions(&puzzle.grid, &self.cells, &puzzle.clues)
         };
         if deduced.is_empty() {
             self.status = "One step: the clues force nothing new right now.".to_string();
@@ -517,9 +517,9 @@ impl App {
         let hwnd = self.hwnd as isize;
         let settings = self.settings.clone();
         thread::spawn(move || {
-            let cfg = crate::generator::GenConfig::from_settings(&settings);
-            let mut rng = crate::rng::Rng::new(seed);
-            let result = crate::generator::generate_with(&mut rng, &cfg)
+            let cfg = tapa_core::generator::GenConfig::from_settings(&settings);
+            let mut rng = tapa_core::rng::Rng::new(seed);
+            let result = tapa_core::generator::generate_with(&mut rng, &cfg)
                 .map(|r| r.puzzle)
                 .ok_or_else(|| format!("generation failed (seed {seed})"));
             *slot.lock().unwrap() = Some(result);
@@ -682,37 +682,6 @@ fn mouse_pos(lparam: LPARAM) -> (i32, i32) {
     let x = (lparam & 0xFFFF) as u16 as i16 as i32;
     let y = ((lparam >> 16) & 0xFFFF) as u16 as i16 as i32;
     (x, y)
-}
-
-/// Cells on the orthogonal line between two cells, inclusive of both ends.
-/// Used so a quick drag paints every cell it crosses.
-fn line_cells(grid: &crate::model::Grid, from: usize, to: usize) -> Vec<usize> {
-    let (x0, y0) = grid.xy(from);
-    let (x1, y1) = grid.xy(to);
-    let (mut x, mut y) = (x0 as i32, y0 as i32);
-    let (tx, ty) = (x1 as i32, y1 as i32);
-    let dx = (tx - x).abs();
-    let dy = (ty - y).abs();
-    let sx = if x < tx { 1 } else { -1 };
-    let sy = if y < ty { 1 } else { -1 };
-    let mut err = dx - dy;
-    let mut out = Vec::with_capacity((dx + dy) as usize + 1);
-    loop {
-        out.push(grid.idx(x as usize, y as usize));
-        if x == tx && y == ty {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 > -dy {
-            err -= dy;
-            x += sx;
-        }
-        if e2 < dx {
-            err += dx;
-            y += sy;
-        }
-    }
-    out
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {

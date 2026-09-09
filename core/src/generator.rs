@@ -15,8 +15,9 @@
 //! Every accepted puzzle is therefore guaranteed to have exactly one solution,
 //! and that solution is the shape the generator started from.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use crate::clock::{now_ms, Timer};
 use crate::config::Settings;
 use crate::model::{
     clue_is_showable, clue_of, largest_blank_region, largest_clueless_region, validate, Clue,
@@ -32,8 +33,9 @@ pub struct GenConfig {
     /// Fraction of the grid that should become black.
     pub black_lo: f64,
     pub black_hi: f64,
-    /// Budget for the whole generation.
-    pub deadline: Option<Instant>,
+    /// Budget for the whole generation, as an absolute [`crate::clock::now_ms`]
+    /// timestamp in milliseconds.
+    pub deadline: Option<f64>,
     /// Nodes for the whole generation, shared adaptively between proofs.
     pub node_budget: u64,
     /// Time for the whole generation, shared adaptively between proofs.
@@ -53,7 +55,7 @@ pub struct GenConfig {
 /// its fair share can still finish while the pool has room.
 struct Budget {
     nodes: u64,
-    deadline: Option<Instant>,
+    deadline: Option<f64>,
     slack: u64,
     min_nodes: u64,
 }
@@ -63,7 +65,8 @@ impl Budget {
         Budget {
             nodes: cfg.node_budget,
             deadline: cfg.deadline.or_else(|| {
-                (!cfg.time_budget.is_zero()).then(|| Instant::now() + cfg.time_budget)
+                (!cfg.time_budget.is_zero())
+                    .then(|| now_ms() + cfg.time_budget.as_secs_f64() * 1000.0)
             }),
             slack: cfg.check_slack.max(1),
             min_nodes: cfg.check_min_nodes.max(1),
@@ -78,14 +81,14 @@ impl Budget {
             .max(self.min_nodes)
             .min(self.nodes.max(1));
         let deadline = self.deadline.map(|end| {
-            let remaining = end.saturating_duration_since(Instant::now());
-            Instant::now() + remaining.div_f64(left as f64) * self.slack as u32
+            let remaining = (end - now_ms()).max(0.0);
+            now_ms() + remaining / left as f64 * self.slack as f64
         });
         SolveLimits::unique_check(deadline).with_node_budget(nodes)
     }
 
     fn exhausted(&self) -> bool {
-        self.nodes == 0 || self.deadline.map_or(false, |end| Instant::now() >= end)
+        self.nodes == 0 || self.deadline.map_or(false, |end| now_ms() >= end)
     }
 
     fn spend(&mut self, nodes: u64) {
@@ -159,7 +162,7 @@ pub struct GenResult {
 }
 
 pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
-    let started = Instant::now();
+    let started = Timer::start();
     let grid = Grid::new(cfg.w, cfg.h);
     let n = grid.len();
     let mut attempts = 0usize;
@@ -206,7 +209,7 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         let start = vec![UNKNOWN; n];
         let shape_limits = budget.share(10);
         let solver = Solver::new(grid.clone(), &candidates);
-        let t0 = Instant::now();
+        let t0 = Timer::start();
         let outcome = solver.solve(&start, &shape_limits);
         spent_time += t0.elapsed();
         budget.spend(outcome.nodes);
@@ -340,7 +343,7 @@ fn minimise(
                 .map(|(_, c)| c.clone())
                 .collect();
             let solver = Solver::new(grid.clone(), &trial);
-            let t0 = Instant::now();
+            let t0 = Timer::start();
             let outcome = solver.solve(start, &budget.share(left + 1));
             solve_time += t0.elapsed();
             nodes += outcome.nodes;
@@ -479,7 +482,7 @@ mod tests {
     fn check_generated(w: usize, h: usize, seed: u64, strict_minimal: bool) {
         let mut rng = Rng::new(seed);
         let mut cfg = GenConfig::for_size(w, h);
-        cfg.deadline = Some(Instant::now() + Duration::from_secs(120));
+        cfg.deadline = Some(now_ms() + 120_000.0);
         if strict_minimal {
             // a budget abort keeps a clue, so unbounded runs are needed to
             // assert strict minimality

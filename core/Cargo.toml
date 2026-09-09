@@ -1,0 +1,9 @@
+[package]
+name = "tapa-core"
+version = "0.1.0"
+edition = "2021"
+description = "Tapa rules, solver and unique-solution generator, shared by the native game and the WebAssembly build"
+
+[lib]
+name = "tapa_core"
+path = "src/lib.rs"

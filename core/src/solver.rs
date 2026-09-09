@@ -19,8 +19,8 @@
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-use std::time::Instant;
 
+use crate::clock::now_ms;
 use crate::model::{clue_masks, Clue, Grid, BLACK, UNKNOWN, WHITE};
 
 /// Cache of clue -> neighbour masks. Clues repeat a lot across solver instances.
@@ -138,14 +138,15 @@ impl Scratch {
 
 pub struct SolveLimits {
     pub max_solutions: usize,
-    /// Hard wall clock budget; `None` means "no limit".
-    pub deadline: Option<Instant>,
+    /// Hard wall clock budget as an absolute [`crate::clock::now_ms`] timestamp
+    /// in milliseconds; `None` means "no limit".
+    pub deadline: Option<f64>,
     /// Hard node budget; `u64::MAX` means "no limit".
     pub max_nodes: u64,
 }
 
 impl SolveLimits {
-    pub fn unique_check(deadline: Option<Instant>) -> SolveLimits {
+    pub fn unique_check(deadline: Option<f64>) -> SolveLimits {
         SolveLimits {
             max_solutions: 2,
             deadline,
@@ -268,7 +269,7 @@ impl Solver {
         }
         if ctx.nodes & 0x3FF == 0 {
             if let Some(deadline) = ctx.deadline {
-                if Instant::now() >= deadline {
+                if now_ms() >= deadline {
                     ctx.aborted = true;
                     return;
                 }
@@ -605,7 +606,7 @@ impl Solver {
 struct Ctx {
     nodes: u64,
     max_nodes: u64,
-    deadline: Option<Instant>,
+    deadline: Option<f64>,
     aborted: bool,
     scratch: Scratch,
 }

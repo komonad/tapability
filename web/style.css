@@ -1,0 +1,311 @@
+/* Tapa web front end. The colours mirror src/render.rs so the browser and the
+   native window look like the same game. */
+
+:root {
+  --bg: #f6f7fa;
+  --card: #ffffff;
+  --unknown: #e8eaf0;
+  --wall: #2a2d3c;
+  --clue: #fdf8e2;
+  --grid: #a8aebc;
+  --border: #464c60;
+  --text: #303028;
+  --dim: #707f88;
+  --good: #208a30;
+  --bad: #c82020;
+  --accent: #3a82e2;
+  --line: #dfe3ec;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+.app {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 18px;
+  min-height: 100%;
+}
+
+.board-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.status {
+  margin: 0;
+  font-size: 14px;
+  color: var(--dim);
+  text-align: right;
+}
+
+.status.good {
+  color: var(--good);
+  font-weight: 600;
+}
+
+.status.bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.stage {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  min-height: 0;
+}
+
+canvas {
+  display: block;
+  border-radius: 4px;
+  touch-action: none;
+  cursor: crosshair;
+  outline: none;
+}
+
+canvas:focus-visible {
+  box-shadow: 0 0 0 3px rgba(58, 130, 226, 0.35);
+}
+
+.footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hint,
+.info,
+.stats {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.info {
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.stats {
+  font-size: 12px;
+}
+
+/* ---- control column ---------------------------------------------------- */
+
+.panel {
+  flex: 0 0 320px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  position: sticky;
+  top: 18px;
+}
+
+.panel-title {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.buttons.row {
+  grid-template-columns: 1fr 1fr;
+}
+
+button {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f3f5fa;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  background: #e7ecf7;
+  border-color: #c3ccdd;
+}
+
+button:active:not(:disabled) {
+  background: #dbe3f2;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+kbd {
+  font: 11px/1 "Segoe UI", system-ui, sans-serif;
+  padding: 2px 4px;
+  border: 1px solid #ccd3e0;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--dim);
+}
+
+/* ---- settings ---------------------------------------------------------- */
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.field label {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.field input {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  width: 100%;
+  min-width: 0;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(58, 130, 226, 0.16);
+}
+
+.field.active {
+  background: #f2f6ff;
+  border-radius: 6px;
+}
+
+.help {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dim);
+  min-height: 32px;
+  background: #f7f8fc;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.message {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  min-height: 18px;
+}
+
+.message.good {
+  color: var(--good);
+}
+
+.message.bad {
+  color: var(--bad);
+}
+
+/* ---- batch output ------------------------------------------------------ */
+
+.output-wrap {
+  margin: 0 18px 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.output-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.output-head button {
+  padding: 4px 10px;
+}
+
+#output {
+  margin: 0;
+  padding: 12px;
+  max-height: 40vh;
+  overflow: auto;
+  font: 12px/1.35 "Cascadia Mono", Consolas, "Courier New", monospace;
+  white-space: pre;
+  color: #23252e;
+}
+
+@media (max-width: 900px) {
+  .app {
+    flex-direction: column;
+  }
+
+  .panel {
+    flex: 1 1 auto;
+    width: 100%;
+    position: static;
+    max-height: none;
+  }
+}

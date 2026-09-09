@@ -1,19 +1,24 @@
-﻿# Tapa
+# Tapa
 
-A Tapa puzzle game for Windows, written in Rust with no external crates except
-`winapi`. It contains a rule-based solver and a generator that only ever emits
-puzzles whose solution is **provably unique**.
+A Tapa puzzle game in Rust, in two flavours that share one engine: a Win32
+desktop window and a browser front end that runs the same code as WebAssembly.
+The only external crate is `winapi`, and only the desktop window needs it. Both
+contain a rule-based solver and a generator that only ever emits puzzles whose
+solution is **provably unique**.
 
 ![a generated board](board.png)
 
-The window is sized from the desktop work area (taskbar excluded) and centred,
-so the whole board and the control column are always visible.
+The desktop window is sized from the desktop work area (taskbar excluded) and
+centred, so the whole board and the control column are always visible.
 
 ```
-cargo run --release                 # play
+cargo run --release                 # play in a Win32 window
 cargo run --release -- --print 1    # print a puzzle + its solution
 cargo run --release -- --bench 20   # time 20 generations
-cargo test --release                # 31 tests, incl. uniqueness + minimality
+cargo test --workspace --release    # 43 tests, incl. uniqueness + minimality
+
+pwsh -File build-web.ps1            # build web/tapa.wasm, then check the ABI
+node tools/serve.cjs                # then open http://127.0.0.1:8080/
 ```
 
 ## Rules
@@ -130,19 +135,70 @@ budget never breaks uniqueness - it only leaves a redundant clue in place.
 Measured on this machine: 12x12 generates in ~15 ms, 20x20 in ~1.0 s average,
 30x30 in 5-10 s (it needs a larger `node_budget` to stay minimal).
 
+## Web front end (WebAssembly)
+
+The engine - generator, solver, rules, one-step deduction - compiles to
+WebAssembly and runs inside a Web Worker, so the page never blocks, not even
+while a 20x20 puzzle is being generated and its uniqueness proved. The
+JavaScript is a pure view: it draws the board on a canvas, turns mouse and
+keyboard into command strings, and renders whatever state the engine reports.
+
+```
+pwsh -File build-web.ps1     # cargo build --target wasm32-unknown-unknown + copy
+node tools/serve.cjs         # static server on http://127.0.0.1:8080/
+node tools/wasm-smoke.cjs    # drive the ABI from Node, no browser needed
+node tools/browser-check.cjs # drive the real page in headless Chrome
+```
+
+`web/` is plain HTML/CSS/JS with no build step and no dependencies. The module
+is loaded by hand rather than through `wasm-bindgen`, which is not available
+offline: `tapa-wasm` exports a scratch buffer for the command text plus a JSON
+reply buffer, and `web/worker.js` copies commands in and parses replies out. The
+only requirement is the `wasm32-unknown-unknown` standard library, which
+`build-web.ps1` adds if it is missing.
+
+Everything the desktop game does is in the browser too:
+
+| feature | where |
+|---|---|
+| left click wall / right click empty / click again to clear | canvas pointer events |
+| drag a whole stroke, gaps filled in | `line_cells` in the engine |
+| wall-group spotlight on paint, and on Shift + hover | `floodFill` in `web/app.js` |
+| red clues, red sealed-off walls, red 2x2, red wrong cells | `live_errors` in the engine, drawn as outlines |
+| a small square for an explicit empty mark | canvas |
+| N / R / C / S / D / Z keys, hold Z to repeat | window key handlers |
+| middle click a clue to step only that clue | `cluestep` command |
+| settings with hover help, remembered between visits | `localStorage`, fields built from the engine's `FIELDS` |
+| no wall count anywhere in the UI | the state the engine reports never contains one |
+| `--print` / `--bench` | Print and Bench buttons, same text as the CLI |
+
+`tools/browser-check.cjs` drives the real page in headless Chrome with real
+input events: it paints, drags, undoes, steps a clue, checks every deduction
+against the solution, spotlights a group, resizes the board, checks that
+settings survive a reload, and confirms the page still answers in milliseconds
+while the worker is benching. It writes `web-check.png` so the layout can be
+inspected by eye.
+
 ## Code map
 
 | file | contents |
 |---|---|
-| `src/model.rs` | grid geometry, cell states, clue encoding (`mask -> run lengths`), rule validation, live rule analysis, one-step deductions |
-| `src/solver.rs` | propagation + backtracking search, capped solution counting |
-| `src/generator.rs` | tree-shaped solution, maximal clue set, minimisation to a minimal set |
-| `src/config.rs` | generation settings (file, command line, in-game controls) |
-| `src/settings_ui.rs` | the always-visible control column |
-| `src/rng.rs` | splitmix64 PRNG (no dependency, reproducible seeds) |
+| `core/src/model.rs` | grid geometry, cell states, clue encoding (`mask -> run lengths`), rule validation, live rule analysis, one-step deductions |
+| `core/src/solver.rs` | propagation + backtracking search, capped solution counting |
+| `core/src/generator.rs` | tree-shaped solution, maximal clue set, minimisation to a minimal set |
+| `core/src/config.rs` | generation settings (file, command line, in-game controls) |
+| `core/src/clock.rs` | monotonic milliseconds: `Instant` natively, a host import in wasm |
+| `core/src/report.rs` | the text of `--print` / `--bench`, shared with the browser |
+| `core/src/text.rs` | board rendering as text |
+| `core/src/rng.rs` | splitmix64 PRNG (no dependency, reproducible seeds) |
 | `src/render.rs` | GDI drawing, double buffered |
 | `src/window.rs` | Win32 window, app state, undo stack, input handling |
+| `src/settings_ui.rs` | the always-visible control column |
 | `src/cli.rs` | `--print` / `--bench` |
+| `wasm/src/lib.rs` | game state plus the command/JSON bridge, compiled to WebAssembly |
+| `web/index.html`, `web/style.css`, `web/app.js`, `web/worker.js` | the browser front end |
+| `tools/*.cjs` | static server, wasm ABI smoke test, headless-browser check |
+| `build-web.ps1` | builds and installs `web/tapa.wasm` |
 
 ## How the solver works
 
@@ -218,7 +274,11 @@ Windows, `--release`, 20x20, 20 seeds:
 | black cells | 165-199 of 400 (41-50%) |
 | biggest clue-free patch | 8-39 cells (2-10% of the board) |
 | clue-free rows / columns | 0-1 of 20 |
-| test suite | 31 tests, ~0.6 s release |
+| test suite | 43 tests, ~1 s release |
+
+The same engine in WebAssembly (`web/tapa.wasm`, 144 KiB, Chrome 152): 20x20,
+5 seeds, 813 ms average, 0 failures - within noise of the native build. The page
+itself stays interactive throughout, because all of it runs on a worker thread.
 
 The clue count is high because the numbers have to cover the whole board *and*
 the set has to stay minimal. Dense boards are also what make the solver fast:
@@ -236,6 +296,11 @@ the tail latency went down as the density went up.
   or 2x2 rules would force.
 * The solver has no clause learning or restarts; hard instances are bounded by
   the shared budget rather than solved quickly.
-* Windows only (Win32 + GDI). No network access was available, so the only
-  dependency is `winapi`, which was already in the local cargo cache.
+* The desktop build is Windows only (Win32 + GDI). The engine and the browser
+  front end are not: they only need `wasm32-unknown-unknown`.
+* The browser build needs a static server; `file://` cannot fetch WebAssembly.
+  `tools/serve.cjs` is that server, with no dependencies.
+* No network access was available while this was written, so the only dependency
+  is `winapi`, which was already in the local cargo cache. That is also why the
+  wasm bridge is hand-written instead of using `wasm-bindgen`.
 

@@ -1,4 +1,4 @@
-﻿//! A 20x20 Tapa puzzle game with a built-in solver and unique-solution generator.
+//! A 20x20 Tapa puzzle game with a built-in solver and unique-solution generator.
 //!
 //! Usage:
 //!   tapa                     launch the game (left click = wall, right click = empty)
@@ -11,19 +11,14 @@
 //! Run `tapa --help` for the full list of settings.
 
 mod cli;
-mod config;
-mod generator;
-mod model;
 mod render;
 mod settings_ui;
-mod rng;
-mod solver;
 mod window;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use config::Settings;
+use tapa_core::config::{self, Settings};
 
 fn usage() {
     println!(

@@ -6,7 +6,19 @@ version = 4
 name = "tapa"
 version = "0.1.0"
 dependencies = [
+ "tapa-core",
  "winapi",
+]
+
+[[package]]
+name = "tapa-core"
+version = "0.1.0"
+
+[[package]]
+name = "tapa-wasm"
+version = "0.1.0"
+dependencies = [
+ "tapa-core",
 ]
 
 [[package]]

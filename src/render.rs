@@ -1,4 +1,4 @@
-﻿//! GDI rendering. Everything is drawn into an off-screen bitmap first so the
+//! GDI rendering. Everything is drawn into an off-screen bitmap first so the
 //! board never flickers.
 
 use std::mem;
@@ -10,7 +10,7 @@ use winapi::shared::windef::{COLORREF, HBRUSH, HDC, HFONT, HGDIOBJ, HPEN, HWND, 
 use winapi::um::wingdi::*;
 use winapi::um::winuser::*;
 
-use crate::model::{Puzzle, BLACK, WHITE};
+use tapa_core::model::{Puzzle, BLACK, WHITE};
 use crate::window::{App, StatusKind};
 
 pub const MARGIN: i32 = 24;

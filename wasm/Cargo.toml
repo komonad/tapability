@@ -1,0 +1,13 @@
+[package]
+name = "tapa-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly bridge: the Tapa engine and the game state, driven from JavaScript"
+
+[lib]
+name = "tapa_wasm"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+tapa-core = { path = "../core" }
