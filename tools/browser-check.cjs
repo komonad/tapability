@@ -514,7 +514,7 @@ async function main() {
   await waitFor(`!ui.busy`, "the block is cleared again");
   await sleep(100);
 
-  // ---- a wall sealed off by empty marks is flagged ------------------------
+  // ---- isolation: only two groups that can never meet are flagged ---------
   const sealed = await evaluate(`(async () => {
     let target = null;
     for (let y = 1; y + 1 < ui.rows && !target; y += 1) {
@@ -534,17 +534,36 @@ async function main() {
     }
     state = await send("paint end");
     applyState(state);
+    return { i: target.i, mark: state.cells[target.i], error: state.errorsCells[target.i] };
+  })()`);
+  check(
+    "a lone wall group is not flagged, even sealed in",
+    sealed.mark === "1" && sealed.error === "0",
+    JSON.stringify(sealed),
+  );
+
+  // a second wall group elsewhere makes the sealed one stranded
+  const second = await evaluate(`(async () => {
+    let far = null;
+    for (let i = ui.cells.length - 1; i >= 0 && far === null; i -= 1) {
+      if (ui.clues.has(i) || ui.cells[i] !== 0) continue;
+      const x = i % ui.cols, y = Math.floor(i / ui.cols);
+      if (Math.abs(x - ${sealed.i} % ui.cols) + Math.abs(y - Math.floor(${sealed.i} / ui.cols)) < 4) continue;
+      far = { i, x, y };
+    }
+    let state = await send(\`paint begin \${far.x} \${far.y} 1\`);
+    state = await send("paint end");
+    applyState(state);
     return {
-      i: target.i,
-      mark: state.cells[target.i],
-      error: state.errorsCells[target.i],
-      errorCount: [...state.errorsCells].filter((c) => c === "1").length,
+      i: far.i,
+      sealed: state.errorsCells[${sealed.i}],
+      far: state.errorsCells[far.i],
     };
   })()`);
   check(
-    "a wall sealed in by empty marks and clues is flagged",
-    sealed.mark === "1" && sealed.error === "1",
-    JSON.stringify(sealed),
+    "the sealed group is flagged once another wall group exists",
+    second.sealed === "1" && second.far === "0",
+    JSON.stringify(second),
   );
   const redOutline = await evaluate(`(() => {
     const ctx = document.getElementById("board").getContext("2d");

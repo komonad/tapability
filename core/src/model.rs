@@ -532,14 +532,14 @@ pub fn live_errors(
     // undecided cells). Two wall groups in the same potential group can still
     // be joined later; groups in different potential groups never can.
     //
-    // This also catches a *single* wall group that the player has sealed off
-    // with empty marks and clue cells: the solution needs walls outside that
-    // pocket too, and none of them could ever reach it.
+    // A lone wall group is deliberately *not* flagged, even when the player has
+    // sealed it in: the rule is about two groups that can never meet again, not
+    // about predicting that the solution must have walls elsewhere.
     let mut potential = vec![usize::MAX; n];
     let potential_count = components(grid, marks, |s| s != WHITE, &mut potential);
     let mut wall_id = vec![usize::MAX; n];
-    let _wall_groups = components(grid, marks, |s| s == BLACK, &mut wall_id);
-    if potential_count > 1 {
+    let wall_groups = components(grid, marks, |s| s == BLACK, &mut wall_id);
+    if wall_groups > 1 && potential_count > 1 {
         let mut potential_size = vec![0usize; potential_count];
         for i in 0..n {
             if potential[i] != usize::MAX {
@@ -786,8 +786,10 @@ mod tests {
     }
 
     #[test]
-    fn live_errors_flags_a_lone_wall_that_is_sealed_in() {
-        // the only wall on the board, cut off by empty marks
+    fn live_errors_leaves_a_lone_wall_alone_even_when_sealed_in() {
+        // A single wall group is never flagged: the isolation rule is about two
+        // groups that can never meet again, not about guessing where the rest
+        // of the solution's walls must be.
         let grid = Grid::new(5, 5);
         let mut marks = vec![UNKNOWN; 25];
         marks[12] = BLACK; // (2,2)
@@ -795,24 +797,7 @@ mod tests {
             marks[nb] = WHITE;
         }
         let errors = live_errors(&grid, &marks, &[], Some(12));
-        assert!(errors.cells[12], "a lone sealed wall must be flagged");
-    }
-
-    #[test]
-    fn live_errors_flags_a_wall_sealed_in_by_clue_cells() {
-        // clue cells count as empty, so a pocket of clue cells seals a wall too
-        let grid = Grid::new(5, 5);
-        let mut marks = vec![UNKNOWN; 25];
-        marks[12] = BLACK; // (2,2)
-        let clues: Vec<(usize, Clue)> = [7usize, 8, 9, 11, 13, 17, 18, 19]
-            .iter()
-            .map(|&i| (i, vec![1u8]))
-            .collect();
-        for (i, _) in clues.iter() {
-            marks[*i] = WHITE; // clue cells are given as empty
-        }
-        let errors = live_errors(&grid, &marks, &clues, Some(12));
-        assert!(errors.cells[12], "a wall inside a ring of clues is stranded");
+        assert!(!errors.cells.iter().any(|&b| b), "a lone wall is not stranded");
     }
 
     #[test]
