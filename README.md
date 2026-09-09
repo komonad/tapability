@@ -76,9 +76,12 @@ check:
 * **red clue** - if the walls and empty marks around a clue can no longer form
   its numbers, the clue turns red.
 * **red walls** - a wall group that can never join the main wall group any more,
-  because every cell between them is marked empty, is outlined in red. Groups
-  that are only separate *for now* (undecided cells still connect them) are left
-  alone.
+  because every cell between them is marked empty, is outlined in red. This
+  includes a *single* wall group that has been sealed in: the cells that could
+  still become black around it are cut off from the rest of the board, and the
+  solution needs walls out there too. Groups that are only separate *for now*
+  (undecided cells still connect them) are left alone. Clue cells count as
+  empty here, since they are given.
 * **red 2x2** - any 2x2 block of walls is outlined in red.
 
 Grid lines are never drawn between two cells that are already filled in, so a

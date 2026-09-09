@@ -514,6 +514,62 @@ async function main() {
   await waitFor(`!ui.busy`, "the block is cleared again");
   await sleep(100);
 
+  // ---- a wall sealed off by empty marks is flagged ------------------------
+  const sealed = await evaluate(`(async () => {
+    let target = null;
+    for (let y = 1; y + 1 < ui.rows && !target; y += 1) {
+      for (let x = 1; x + 1 < ui.cols && !target; x += 1) {
+        const i = y * ui.cols + x;
+        if (!ui.clues.has(i) && ui.cells[i] === 0) target = { i, x, y };
+      }
+    }
+    let state = await send(\`paint begin \${target.x} \${target.y} 1\`);
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (!dx && !dy) continue;
+        const j = (target.y + dy) * ui.cols + (target.x + dx);
+        if (ui.clues.has(j)) continue;   // clue cells are empty already
+        state = await send(\`paint begin \${j % ui.cols} \${Math.floor(j / ui.cols)} 0\`);
+      }
+    }
+    state = await send("paint end");
+    applyState(state);
+    return {
+      i: target.i,
+      mark: state.cells[target.i],
+      error: state.errorsCells[target.i],
+      errorCount: [...state.errorsCells].filter((c) => c === "1").length,
+    };
+  })()`);
+  check(
+    "a wall sealed in by empty marks and clues is flagged",
+    sealed.mark === "1" && sealed.error === "1",
+    JSON.stringify(sealed),
+  );
+  const redOutline = await evaluate(`(() => {
+    const ctx = document.getElementById("board").getContext("2d");
+    const dpr = ui.dpr, cell = ui.cell;
+    const x = (${sealed.i} % ui.cols) * cell, y = Math.floor(${sealed.i} / ui.cols) * cell;
+    const data = ctx.getImageData(
+      Math.round(x * dpr), Math.round(y * dpr), Math.round(cell * dpr), Math.round(cell * dpr),
+    ).data;
+    let n = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (Math.abs(data[i] - 226) < 40 && Math.abs(data[i + 1] - 52) < 40 && Math.abs(data[i + 2] - 52) < 40) {
+        n += 1;
+      }
+    }
+    return n;
+  })()`);
+  check(
+    "the stranded wall is outlined in red",
+    redOutline > 0,
+    `${redOutline} red pixels`,
+  );
+  await evaluate(`document.getElementById("btn-clear").click()`);
+  await waitFor(`!ui.busy`, "the sealed wall is cleared again");
+  await sleep(100);
+
   // ---- undo takes the stroke back ----------------------------------------
   await key("z");
   await sleep(80);
