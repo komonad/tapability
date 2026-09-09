@@ -1,4 +1,4 @@
-//! Core Tapa model: grid geometry, cell states, clue encoding and validation.
+﻿//! Core Tapa model: grid geometry, cell states, clue encoding and validation.
 //!
 //! Tapa rules implemented here:
 //!   * a clue cell is never black;
@@ -274,8 +274,47 @@ impl Puzzle {
         self.clue_index[idx].map(|k| &self.clues[k as usize].1)
     }
 
-    pub fn black_count(&self) -> usize {
-        self.solution.iter().filter(|&&c| c == BLACK).count()
+}
+
+/// Cells that the clues alone force, given the current marks.
+///
+/// This is the "one step" hint: only the rule *"the black runs around a clue
+/// must match its numbers"* is used, and only on the eight cells around each
+/// clue. It is applied to a fixpoint, so a deduction can feed the next one.
+/// Returns `(cell, value)` pairs for cells that were still unknown.
+pub fn clue_deductions(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> Vec<(usize, u8)> {
+    let mut state = marks.to_vec();
+    let mut deduced = Vec::new();
+    loop {
+        let mut changed = false;
+        for (idx, clue) in clues {
+            let alive: Vec<u8> = feasible_masks(grid, *idx, clue)
+                .into_iter()
+                .filter(|&m| mask_fits_marks(grid, *idx, m, &state))
+                .collect();
+            if alive.is_empty() {
+                continue; // already impossible; the red marker reports it
+            }
+            for (b, nb) in grid.neighbors(*idx).iter().enumerate() {
+                let Some(nb) = nb else { continue };
+                if state[*nb] != UNKNOWN {
+                    continue;
+                }
+                let bit = 1u8 << b;
+                if alive.iter().all(|m| m & bit != 0) {
+                    state[*nb] = BLACK;
+                    deduced.push((*nb, BLACK));
+                    changed = true;
+                } else if alive.iter().all(|m| m & bit == 0) {
+                    state[*nb] = WHITE;
+                    deduced.push((*nb, WHITE));
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return deduced;
+        }
     }
 }
 
@@ -711,8 +750,37 @@ mod tests {
     }
 
     #[test]
-    fn live_errors_flags_impossible_clue() {
+    fn one_step_deductions() {
+        // 3x3, clue "1" at the centre. Marking one neighbour empty leaves
+        // exactly one place for the single wall: the opposite one.
         let grid = Grid::new(3, 3);
+        let clues = vec![(4usize, vec![1u8])];
+        let mut marks = vec![UNKNOWN; 9];
+        marks[4] = WHITE; // clue cells are given as empty
+        let found = clue_deductions(&grid, &marks, &clues);
+        assert!(found.is_empty(), "nothing is forced yet");
+
+        // every neighbour empty except one -> that one must be the wall
+        for i in [0usize, 1, 2, 3, 5, 6, 7] {
+            marks[i] = WHITE;
+        }
+        let found = clue_deductions(&grid, &marks, &clues);
+        assert_eq!(found, vec![(8, BLACK)]);
+
+        // clue "2" with one neighbour already black forces the other wall
+        let clues = vec![(4usize, vec![2u8])];
+        let mut marks = vec![UNKNOWN; 9];
+        marks[4] = WHITE;
+        marks[0] = BLACK;
+        for i in [2usize, 3, 5, 6, 7] {
+            marks[i] = WHITE;
+        }
+        let found = clue_deductions(&grid, &marks, &clues);
+        assert!(found.contains(&(1, BLACK)) || found.contains(&(3, BLACK)));
+    }
+
+    #[test]
+    fn live_errors_flags_impossible_clue() {        let grid = Grid::new(3, 3);
         let mut marks = vec![UNKNOWN; 9];
         marks[0] = BLACK;
         marks[2] = BLACK;
@@ -722,3 +790,4 @@ mod tests {
         assert!(errors.cells[4]);
     }
 }
+

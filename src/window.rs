@@ -1,4 +1,4 @@
-//! Win32 window, application state and input handling.
+﻿//! Win32 window, application state and input handling.
 
 use std::collections::VecDeque;
 use std::mem;
@@ -32,6 +32,7 @@ const VK_N_KEY: i32 = b'N' as i32;
 const VK_R_KEY: i32 = b'R' as i32;
 const VK_S_KEY: i32 = b'S' as i32;
 const VK_Z_KEY: i32 = b'Z' as i32;
+const VK_D_KEY: i32 = b'D' as i32;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StatusKind {
@@ -232,6 +233,45 @@ impl App {
     }
 
     /// Undo the most recent mark. Holding Z repeats this through key repeat.
+    /// Fill in everything the clues alone force, given the current marks.
+    /// The deductions go in as normal marks, so Z undoes them like any other.
+    pub fn one_step(&mut self) {
+        if self.generating || self.show_solution {
+            return;
+        }
+        let Some(puzzle) = self.puzzle.as_ref() else {
+            return;
+        };
+        let deduced = crate::model::clue_deductions(&puzzle.grid, &self.cells, &puzzle.clues);
+        let deduced: Vec<(usize, u8)> = deduced
+            .into_iter()
+            .filter(|(cell, _)| self.cells[*cell] == UNKNOWN)
+            .collect();
+        if deduced.is_empty() {
+            self.status = "One step: the clues force nothing new right now.".to_string();
+            self.status_kind = StatusKind::Info;
+            return;
+        }
+
+        for (cell, value) in &deduced {
+            self.history.push_back((*cell, self.cells[*cell]));
+            while self.history.len() > MAX_HISTORY {
+                self.history.pop_front();
+            }
+            self.cells[*cell] = *value;
+        }
+        self.highlight_anchor = None;
+        self.highlight_from_hover = false;
+        self.after_change(deduced.first().map(|(cell, _)| *cell));
+        self.refresh_highlight();
+        self.status = format!(
+            "One step: filled {} cell{} the clues force.",
+            deduced.len(),
+            if deduced.len() == 1 { "" } else { "s" }
+        );
+        self.status_kind = StatusKind::Good;
+    }
+
     /// Show or hide the solution (the S button / key).
     pub fn toggle_solution(&mut self) {
         if self.puzzle.is_some() {
@@ -566,6 +606,7 @@ impl App {
             VK_R_KEY => self.reset(),
             VK_C_KEY => self.check(),
             VK_Z_KEY => self.undo(),
+            VK_D_KEY => self.one_step(),
             VK_SHIFT_KEY => {
                 let down = unsafe { GetAsyncKeyState(VK_SHIFT_KEY) < 0 };
                 self.update_hover_highlight(down);
@@ -661,6 +702,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
         }
         WM_MOUSEMOVE => {
             let (x, y) = mouse_pos(lparam);
+            {
+                // hover help for the control column
+                let mut cursor: POINT = mem::zeroed();
+                GetCursorPos(&mut cursor);
+                settings_ui::hover_help(app, cursor.x, cursor.y);
+            }
             if app.drag.is_some() {
                 app.drag_to(x, y);
                 app.invalidate_grid(hwnd);
@@ -805,6 +852,11 @@ pub fn run(seed: u64, settings: &Settings, settings_path: std::path::PathBuf) ->
         Ok(())
     }
 }
+
+
+
+
+
 
 
 

@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "tapa"
 version = "0.1.0"
 edition = "2021"
@@ -18,3 +18,5 @@ winapi = { version = "0.3.9", features = [
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+
+

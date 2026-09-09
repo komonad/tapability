@@ -470,10 +470,9 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
             ""
         };
         let info = format!(
-            "seed {}    {} clues    {} black cells{}",
+            "seed {}    {} clues{}",
             puzzle.seed,
             puzzle.clues.len(),
-            puzzle.black_count(),
             broken
         );
         text(
@@ -558,6 +557,7 @@ unsafe fn draw_clue(hdc: HDC, g: &Gfx, clue: &[u8], r: RECT, color: COLORREF) {
         );
     }
 }
+
 
 
 

@@ -526,6 +526,38 @@ mod tests {
     }
 
     #[test]
+    fn one_step_deductions_match_the_solution() {
+        use crate::model::{clue_deductions, UNKNOWN, WHITE};
+        let mut rng = Rng::new(2024);
+        let cfg = GenConfig::for_size(20, 20);
+        let result = generate_with(&mut rng, &cfg).expect("generation failed");
+        let puzzle = result.puzzle;
+
+        let mut marks = vec![UNKNOWN; puzzle.grid.len()];
+        for (i, _) in puzzle.clues.iter() {
+            marks[*i] = WHITE;
+        }
+        let deduced = clue_deductions(&puzzle.grid, &marks, &puzzle.clues);
+        println!("one step from a fresh board filled {} cells", deduced.len());
+        for (cell, value) in &deduced {
+            assert_eq!(
+                *value, puzzle.solution[*cell],
+                "one step deduced a wrong value for cell {cell}"
+            );
+        }
+
+        // applying them and stepping again must stay sound and stop eventually
+        for (cell, value) in &deduced {
+            marks[*cell] = *value;
+        }
+        let more = clue_deductions(&puzzle.grid, &marks, &puzzle.clues);
+        for (cell, value) in &more {
+            assert_eq!(*value, puzzle.solution[*cell]);
+        }
+        println!("second step filled {} more", more.len());
+    }
+
+    #[test]
     fn generates_unique_small() {
         check_generated(6, 6, 1, true);
     }

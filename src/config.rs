@@ -65,17 +65,53 @@ fn number(value: &str, key: &str) -> Result<f64, ConfigError> {
         .map_err(|_| ConfigError(format!("{key}: '{value}' is not a number")))
 }
 
-/// The settings shown in the in-game panel, in display order.
-pub const FIELDS: &[(&str, &str)] = &[
-    ("size", "Board size (3-60)"),
-    ("density", "Density LO-HI"),
-    ("max_clueless_fraction", "Max clueless fraction"),
-    ("node_budget", "Node budget"),
-    ("time_budget_ms", "Time budget (ms)"),
-    ("check_min_nodes", "Min nodes per proof"),
-    ("check_slack", "Budget slack"),
-    ("max_attempts", "Max attempts"),
-    ("seed", "Seed (blank = random)"),
+/// The settings shown in the control column: key, label, hover help.
+pub const FIELDS: &[(&str, &str, &str)] = &[
+    (
+        "size",
+        "Board size (3-60)",
+        "Board is size x size cells. Changing it rebuilds the layout and starts a new puzzle.",
+    ),
+    (
+        "density",
+        "Density LO-HI",
+        "Share of cells that become walls, picked randomly in this range. Higher fills the board more.",
+    ),
+    (
+        "max_clueless_fraction",
+        "Max clueless fraction",
+        "Reject a shape when its biggest patch with no clue at all is larger than this share of the board.",
+    ),
+    (
+        "node_budget",
+        "Node budget",
+        "Search nodes allowed for one whole generation, shared between all uniqueness proofs.",
+    ),
+    (
+        "time_budget_ms",
+        "Time budget (ms)",
+        "Milliseconds allowed for one whole generation. 0 means no time limit.",
+    ),
+    (
+        "check_min_nodes",
+        "Min nodes per proof",
+        "Smallest node budget a single uniqueness proof always gets, so cheap proofs are never starved.",
+    ),
+    (
+        "check_slack",
+        "Budget slack",
+        "How much one proof may borrow over its fair share of the pool. 1 = strictly equal shares.",
+    ),
+    (
+        "max_attempts",
+        "Max attempts",
+        "How many random shapes to try before giving up on this configuration.",
+    ),
+    (
+        "seed",
+        "Seed (blank = random)",
+        "A fixed seed makes puzzles reproducible. Blank picks a new seed from the clock.",
+    ),
 ];
 
 impl Settings {
@@ -364,7 +400,7 @@ mod tests {
     #[test]
     fn every_field_has_a_value() {
         let s = Settings::default();
-        for (key, _) in FIELDS {
+        for (key, _, _) in FIELDS {
             if *key == "seed" {
                 continue; // blank means "pick a random seed"
             }

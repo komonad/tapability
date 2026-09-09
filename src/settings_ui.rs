@@ -23,6 +23,7 @@ pub const ID_CHECK: i32 = 5;
 pub const ID_SOLUTION: i32 = 6;
 pub const ID_UNDO: i32 = 7;
 pub const ID_DEFAULTS: i32 = 8;
+pub const ID_ONE_STEP: i32 = 9;
 const ID_EDIT_BASE: i32 = 100;
 
 const ROW_H: i32 = 28;
@@ -30,13 +31,17 @@ const BTN_H: i32 = 30;
 const LABEL_W: i32 = 132;
 const EDIT_W: i32 = 150;
 const FIELD_TOP: i32 = HEADER + 150;
-const MESSAGE_TOP: i32 = FIELD_TOP + FIELDS.len() as i32 * ROW_H + 46;
+const MESSAGE_TOP: i32 = FIELD_TOP + FIELDS.len() as i32 * ROW_H + 76;
+const HELP_TOP: i32 = MESSAGE_TOP + 46;
 
 pub struct Controls {
     pub edits: Vec<HWND>,
     pub buttons: Vec<HWND>,
     pub labels: Vec<HWND>,
     pub message: HWND,
+    /// Line that explains whatever the mouse is hovering.
+    pub help: HWND,
+    pub help_default: String,
 }
 
 fn wide(text: &str) -> Vec<u16> {
@@ -93,7 +98,8 @@ unsafe fn make_label(
         0,
         wide("STATIC").as_ptr(),
         wide(text).as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,        x,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        x,
         y,
         w,
         20,
@@ -145,9 +151,10 @@ pub unsafe fn create(app: &mut App) {
 
     // --- settings fields -------------------------------------------------
     let mut edits = Vec::with_capacity(FIELDS.len());
-    for (index, (_, label)) in FIELDS.iter().enumerate() {
+    for (index, (_, label, _)) in FIELDS.iter().enumerate() {
         let top = FIELD_TOP + index as i32 * ROW_H;
-        labels.push(make_label(app, label, x, top + 3, LABEL_W, hinstance));
+        let label_hwnd = make_label(app, label, x, top + 3, LABEL_W, hinstance);
+        labels.push(label_hwnd);
         let edit = CreateWindowExW(
             WS_EX_CLIENTEDGE,
             wide("EDIT").as_ptr(),
@@ -166,23 +173,36 @@ pub unsafe fn create(app: &mut App) {
         edits.push(edit);
     }
 
+    // --- one-step helper and apply row -----------------------------------
     let button_top = FIELD_TOP + FIELDS.len() as i32 * ROW_H + 10;
+    let step = make_button(
+        app,
+        ID_ONE_STEP,
+        "One step (D)",
+        x,
+        button_top,
+        half,
+        hinstance,
+    );
+    buttons.push(step);
     buttons.push(make_button(
         app,
         ID_APPLY,
         "Apply & new puzzle",
-        x,
+        x + half + 6,
         button_top,
-        half + 30,
+        half - 6,
         hinstance,
     ));
+
+    let second_top = button_top + BTN_H + 6;
     buttons.push(make_button(
         app,
         ID_DEFAULTS,
         "Defaults",
-        x + half + 36,
-        button_top,
-        half - 36,
+        x,
+        second_top,
+        half,
         hinstance,
     ));
 
@@ -190,7 +210,8 @@ pub unsafe fn create(app: &mut App) {
         0,
         wide("STATIC").as_ptr(),
         wide("").as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,        x,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        x,
         MESSAGE_TOP,
         PANEL_W,
         44,
@@ -201,14 +222,55 @@ pub unsafe fn create(app: &mut App) {
     );
     SendMessageW(message, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
 
+    let help_default = format!("settings saved in {}", app.settings_path.display());
+    let help = CreateWindowExW(
+        0,
+        wide("STATIC").as_ptr(),
+        wide(&help_default).as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        x,
+        HELP_TOP,
+        PANEL_W,
+        56,
+        app.hwnd,
+        ptr::null_mut(),
+        hinstance,
+        ptr::null_mut(),
+    );
+    SendMessageW(help, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
+
     app.controls = Some(Controls {
         edits,
         buttons,
         labels,
         message,
+        help,
+        help_default,
     });
     fill_values(app);
     set_text(message, &format!("saved in {}", app.settings_path.display()));
+}
+
+/// Show the help of whatever control the mouse is over, or the default text.
+pub unsafe fn hover_help(app: &App, screen_x: i32, screen_y: i32) {
+    let Some(controls) = app.controls.as_ref() else {
+        return;
+    };
+    let over = |hwnd: HWND| -> bool {
+        let mut rect: winapi::shared::windef::RECT = std::mem::zeroed();
+        GetWindowRect(hwnd, &mut rect);
+        screen_x >= rect.left && screen_x < rect.right && screen_y >= rect.top && screen_y < rect.bottom
+    };
+
+    for (index, (_, _, help)) in FIELDS.iter().enumerate() {
+        let label = controls.labels.get(1 + index);
+        let edit = controls.edits.get(index);
+        if label.map_or(false, |h| over(*h)) || edit.map_or(false, |h| over(*h)) {
+            set_text(controls.help, help);
+            return;
+        }
+    }
+    set_text(controls.help, &controls.help_default);
 }
 
 /// Push the current settings into the edit boxes.
@@ -216,7 +278,7 @@ pub unsafe fn fill_values(app: &App) {
     let Some(controls) = app.controls.as_ref() else {
         return;
     };
-    for (index, (key, _)) in FIELDS.iter().enumerate() {
+    for (index, (key, _, _)) in FIELDS.iter().enumerate() {
         if let Some(edit) = controls.edits.get(index) {
             set_text(*edit, &app.settings.value_of(key));
         }
@@ -278,19 +340,53 @@ pub unsafe fn relayout(app: &App) {
         set(*defaults, x + half + 36, button_top, half - 36, BTN_H);
     }
     set(controls.message, x, MESSAGE_TOP, PANEL_W, 44);
+    set(controls.help, x, HELP_TOP, PANEL_W, 56);
 }
 
 /// Handle a WM_COMMAND from the control column.
 pub unsafe fn handle_command(app: &mut App, id: i32) {
     match id {
-        ID_NEW => app.new_puzzle(app.seed.wrapping_add(1)),
-        ID_CLEAR => app.reset(),
-        ID_CHECK => app.check(),
-        ID_SOLUTION => app.toggle_solution(),
-        ID_UNDO => app.undo(),
+        ID_NEW => {
+            app.new_puzzle(app.seed.wrapping_add(1));
+            mirror_status(app);
+        }
+        ID_CLEAR => {
+            app.reset();
+            mirror_status(app);
+        }
+        ID_CHECK => {
+            app.check();
+            mirror_status(app);
+        }
+        ID_SOLUTION => {
+            app.toggle_solution();
+            mirror_status(app);
+        }
+        ID_UNDO => {
+            app.undo();
+            mirror_status(app);
+        }
+        ID_ONE_STEP => {
+            app.one_step();
+            mirror_status(app);
+        }
         ID_APPLY => apply(app),
         ID_DEFAULTS => defaults(app),
         _ => {}
+    }
+}
+
+/// Show the game's status line in the panel too, so every button press has
+/// visible feedback right next to the button.
+unsafe fn mirror_status(app: &App) {
+    let status = app.status.clone();
+    set_message(app, &status);
+}
+
+/// Write something into the panel's message line.
+pub unsafe fn set_message(app: &App, text: &str) {
+    if let Some(controls) = app.controls.as_ref() {
+        set_text(controls.message, text);
     }
 }
 
@@ -300,7 +396,7 @@ unsafe fn apply(app: &mut App) {
         return;
     };
     let mut settings = app.settings.clone();
-    for (index, (key, label)) in FIELDS.iter().enumerate() {
+    for (index, (key, label, _)) in FIELDS.iter().enumerate() {
         let Some(edit) = controls.edits.get(index) else {
             continue;
         };
@@ -335,7 +431,7 @@ unsafe fn defaults(app: &mut App) {
         return;
     };
     let defaults = Settings::default();
-    for (index, (key, _)) in FIELDS.iter().enumerate() {
+    for (index, (key, _, _)) in FIELDS.iter().enumerate() {
         if let Some(edit) = controls.edits.get(index) {
             set_text(*edit, &defaults.value_of(key));
         }
@@ -367,5 +463,13 @@ pub unsafe fn refresh_fonts(app: &App) {
     }
     SendMessageW(controls.message, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
 }
+
+
+
+
+
+
+
+
 
 
