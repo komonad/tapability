@@ -233,41 +233,86 @@ impl App {
     }
 
     /// Undo the most recent mark. Holding Z repeats this through key repeat.
+    /// Apply a list of deduced marks as ordinary, undoable moves.
+    /// Returns how many cells actually changed.
+    fn apply_marks(&mut self, marks: Vec<(usize, u8)>) -> usize {
+        let mut applied = 0usize;
+        for (cell, value) in marks {
+            if self.cells[cell] != UNKNOWN {
+                continue;
+            }
+            self.history.push_back((cell, self.cells[cell]));
+            while self.history.len() > MAX_HISTORY {
+                self.history.pop_front();
+            }
+            self.cells[cell] = value;
+            applied += 1;
+        }
+        if applied > 0 {
+            self.highlight_anchor = None;
+            self.highlight_from_hover = false;
+            self.after_change(None);
+            self.refresh_highlight();
+        }
+        applied
+    }
+
+    /// Middle click on a clue: deduce only what that single clue forces now.
+    pub fn clue_step_at(&mut self, x: i32, y: i32) {
+        if self.generating || self.show_solution {
+            return;
+        }
+        let Some(cell) = self.cell_at(x, y) else {
+            return;
+        };
+        let Some(puzzle) = self.puzzle.as_ref() else {
+            return;
+        };
+        let Some(clue) = puzzle.clue_at(cell) else {
+            self.status = "Middle-click a clue cell to step just that clue.".to_string();
+            self.status_kind = StatusKind::Info;
+            return;
+        };
+        let step = crate::model::clue_step(&puzzle.grid, &self.cells, cell, clue);
+        let satisfiable = crate::model::clue_satisfiable(&puzzle.grid, &self.cells, cell, clue);
+        let (x0, y0) = puzzle.grid.xy(cell);
+
+        if !satisfiable {
+            self.status = format!("Clue ({x0},{y0}) can no longer be satisfied.");
+            self.status_kind = StatusKind::Bad;
+            return;
+        }
+        if step.is_empty() {
+            self.status = format!("Clue ({x0},{y0}) forces nothing new.");
+            self.status_kind = StatusKind::Info;
+            return;
+        }
+        let applied = self.apply_marks(step);
+        self.status = format!("Clue ({x0},{y0}): filled {applied} cell(s).");
+        self.status_kind = StatusKind::Good;
+    }
+
     /// Fill in everything the clues alone force, given the current marks.
     /// The deductions go in as normal marks, so Z undoes them like any other.
     pub fn one_step(&mut self) {
         if self.generating || self.show_solution {
             return;
         }
-        let Some(puzzle) = self.puzzle.as_ref() else {
-            return;
+        let deduced = {
+            let Some(puzzle) = self.puzzle.as_ref() else {
+                return;
+            };
+            crate::model::clue_deductions(&puzzle.grid, &self.cells, &puzzle.clues)
         };
-        let deduced = crate::model::clue_deductions(&puzzle.grid, &self.cells, &puzzle.clues);
-        let deduced: Vec<(usize, u8)> = deduced
-            .into_iter()
-            .filter(|(cell, _)| self.cells[*cell] == UNKNOWN)
-            .collect();
         if deduced.is_empty() {
             self.status = "One step: the clues force nothing new right now.".to_string();
             self.status_kind = StatusKind::Info;
             return;
         }
-
-        for (cell, value) in &deduced {
-            self.history.push_back((*cell, self.cells[*cell]));
-            while self.history.len() > MAX_HISTORY {
-                self.history.pop_front();
-            }
-            self.cells[*cell] = *value;
-        }
-        self.highlight_anchor = None;
-        self.highlight_from_hover = false;
-        self.after_change(deduced.first().map(|(cell, _)| *cell));
-        self.refresh_highlight();
+        let applied = self.apply_marks(deduced);
         self.status = format!(
-            "One step: filled {} cell{} the clues force.",
-            deduced.len(),
-            if deduced.len() == 1 { "" } else { "s" }
+            "One step: filled {applied} cell{} the clues force.",
+            if applied == 1 { "" } else { "s" }
         );
         self.status_kind = StatusKind::Good;
     }
@@ -749,6 +794,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
             app.invalidate_grid(hwnd);
             0
         }
+        WM_MBUTTONDOWN => {
+            let (x, y) = mouse_pos(lparam);
+            app.clue_step_at(x, y);
+            let status = app.status.clone();
+            settings_ui::set_message(app, &status);
+            InvalidateRect(hwnd, ptr::null(), 0);
+            0
+        }
         WM_LBUTTONUP | WM_RBUTTONUP => {
             app.end_drag();
             ReleaseCapture();
@@ -852,6 +905,8 @@ pub fn run(seed: u64, settings: &Settings, settings_path: std::path::PathBuf) ->
         Ok(())
     }
 }
+
+
 
 
 

@@ -459,7 +459,7 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
         hdc,
         g.font_small,
         C_DIM,
-        "Shift + hover: spotlight a wall group   Z: undo   Esc: quit",
+        "Shift + hover: spotlight a wall group   middle click a clue: step just it   Z: undo   Esc: quit",
         rect(MARGIN, top + line_h, w - MARGIN, top + 2 * line_h),
         DT_LEFT | DT_SINGLELINE | DT_VCENTER,
     );
@@ -557,6 +557,7 @@ unsafe fn draw_clue(hdc: HDC, g: &Gfx, clue: &[u8], r: RECT, color: COLORREF) {
         );
     }
 }
+
 
 
 

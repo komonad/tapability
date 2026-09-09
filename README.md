@@ -1,4 +1,4 @@
-# Tapa
+﻿# Tapa
 
 A Tapa puzzle game for Windows, written in Rust with no external crates except
 `winapi`. It contains a rule-based solver and a generator that only ever emits
@@ -37,6 +37,7 @@ Fill every cell black or white:
 | left click on a white cell | switches it to wall, and vice versa |
 | Z | undo (hold to repeat; one stroke = one entry per cell) |
 | D | one step: fill in everything the clues alone force |
+| middle click a clue | step just that one clue, without cascading |
 | Shift + hover | spotlight the wall group under the cursor |
 | N | new puzzle |
 | R | clear all marks (also undoable) |
@@ -69,6 +70,8 @@ The status bar adds `red = rule broken` whenever something is flagged.
 
 ## One step
 
+There are two granularities. **Middle-clicking a clue cell** applies the rule to
+that single clue once - no cascading - which is handy for poking at one number.
 The **One step (D)** button applies only the rule *"the black runs around a clue
 must match its numbers"* to the cells around each clue, to a fixpoint, and marks
 everything that follows from it. It never uses search or the connectivity rule,
@@ -235,3 +238,4 @@ the tail latency went down as the density went up.
   the shared budget rather than solved quickly.
 * Windows only (Win32 + GDI). No network access was available, so the only
   dependency is `winapi`, which was already in the local cargo cache.
+

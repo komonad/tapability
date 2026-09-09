@@ -276,38 +276,50 @@ impl Puzzle {
 
 }
 
+/// What one clue forces right now, in a single pass - no cascading.
+///
+/// Only the rule *"the black runs around a clue must match its numbers"* is
+/// used, and only on the eight cells around that one clue. Returns `(cell,
+/// value)` pairs for the neighbours that are forced and still unknown.
+pub fn clue_step(grid: &Grid, marks: &[u8], idx: usize, clue: &Clue) -> Vec<(usize, u8)> {
+    let alive: Vec<u8> = feasible_masks(grid, idx, clue)
+        .into_iter()
+        .filter(|&m| mask_fits_marks(grid, idx, m, marks))
+        .collect();
+    if alive.is_empty() {
+        return Vec::new(); // already impossible; the red marker reports it
+    }
+    let mut forced = Vec::new();
+    for (b, nb) in grid.neighbors(idx).iter().enumerate() {
+        let Some(nb) = nb else { continue };
+        if marks[*nb] != UNKNOWN {
+            continue;
+        }
+        let bit = 1u8 << b;
+        if alive.iter().all(|m| m & bit != 0) {
+            forced.push((*nb, BLACK));
+        } else if alive.iter().all(|m| m & bit == 0) {
+            forced.push((*nb, WHITE));
+        }
+    }
+    forced
+}
+
 /// Cells that the clues alone force, given the current marks.
 ///
-/// This is the "one step" hint: only the rule *"the black runs around a clue
-/// must match its numbers"* is used, and only on the eight cells around each
-/// clue. It is applied to a fixpoint, so a deduction can feed the next one.
-/// Returns `(cell, value)` pairs for cells that were still unknown.
+/// Same rule as [`clue_step`], but applied to a fixpoint over every clue, so a
+/// deduction can feed the next one. Returns `(cell, value)` pairs for cells
+/// that were still unknown.
 pub fn clue_deductions(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> Vec<(usize, u8)> {
     let mut state = marks.to_vec();
     let mut deduced = Vec::new();
     loop {
         let mut changed = false;
         for (idx, clue) in clues {
-            let alive: Vec<u8> = feasible_masks(grid, *idx, clue)
-                .into_iter()
-                .filter(|&m| mask_fits_marks(grid, *idx, m, &state))
-                .collect();
-            if alive.is_empty() {
-                continue; // already impossible; the red marker reports it
-            }
-            for (b, nb) in grid.neighbors(*idx).iter().enumerate() {
-                let Some(nb) = nb else { continue };
-                if state[*nb] != UNKNOWN {
-                    continue;
-                }
-                let bit = 1u8 << b;
-                if alive.iter().all(|m| m & bit != 0) {
-                    state[*nb] = BLACK;
-                    deduced.push((*nb, BLACK));
-                    changed = true;
-                } else if alive.iter().all(|m| m & bit == 0) {
-                    state[*nb] = WHITE;
-                    deduced.push((*nb, WHITE));
+            for (cell, value) in clue_step(grid, &state, *idx, clue) {
+                if state[cell] == UNKNOWN {
+                    state[cell] = value;
+                    deduced.push((cell, value));
                     changed = true;
                 }
             }
@@ -780,6 +792,31 @@ mod tests {
     }
 
     #[test]
+    fn single_clue_step_is_local() {
+        // 4x3 grid, one clue at (1,1). Marking seven of its neighbours empty
+        // leaves exactly one place for the wall the clue asks for.
+        let grid = Grid::new(4, 3);
+        let clue = vec![1u8];
+        let mut marks = vec![UNKNOWN; 12];
+        marks[5] = WHITE; // the clue cell itself, at (1,1)
+        for i in [0usize, 1, 2, 4, 6, 8, 9] {
+            marks[i] = WHITE;
+        }
+        let step = clue_step(&grid, &marks, 5, &clue);
+        assert_eq!(step, vec![(10, BLACK)]);
+
+        // the step only ever touches the eight cells of its own clue
+        for (cell, _) in &step {
+            let (x, y) = grid.xy(*cell);
+            let (cx, cy) = grid.xy(5);
+            assert!((x as i32 - cx as i32).abs() <= 1 && (y as i32 - cy as i32).abs() <= 1);
+        }
+
+        // one unknown too many: nothing is forced
+        marks[9] = UNKNOWN;
+        assert!(clue_step(&grid, &marks, 5, &clue).is_empty());
+    }
+    #[test]
     fn live_errors_flags_impossible_clue() {        let grid = Grid::new(3, 3);
         let mut marks = vec![UNKNOWN; 9];
         marks[0] = BLACK;
@@ -790,4 +827,7 @@ mod tests {
         assert!(errors.cells[4]);
     }
 }
+
+
+
 
