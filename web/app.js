@@ -39,6 +39,8 @@ const MIN_CELL = 11;
 const MAX_CELL = 96;
 const MIN_SIZE = 3;
 const MAX_SIZE = 60;
+/** How far a finger may wander and still count as a tap rather than a stroke. */
+const TAP_MOVE_PX = 10;
 const STORAGE_KEY = "tapa.settings";
 
 const ZOOM_HELP =
@@ -103,6 +105,8 @@ const ui = {
   painting: false,
   strokeLeft: true,
   lastPaintCell: -1,
+  /** Pending touch: { cell, x, y } until it turns into a tap or a stroke. */
+  tap: null,
   busy: false,
   fields: [],
   outputTitle: "",
@@ -566,6 +570,25 @@ els.canvas.addEventListener("pointerdown", (event) => {
   const x = cell % ui.cols;
   const y = Math.floor(cell / ui.cols);
 
+  // Touch screens have no second button, so a tap cycles the cell and a drag
+  // paints a stroke. Wait for the release (or for the finger to travel) before
+  // deciding which one it is.
+  if (event.pointerType === "touch") {
+    ui.hover = cell;
+    if (ui.clues.has(cell)) {
+      ui.lastClue = cell;
+    }
+    ui.tap = { cell, x: event.clientX, y: event.clientY };
+    ui.suppressAnchor = false;
+    try {
+      els.canvas.setPointerCapture(event.pointerId);
+    } catch {
+      /* synthetic events have no real pointer to capture */
+    }
+    render();
+    return;
+  }
+
   // middle click, or Alt + click for trackpads without a middle button
   if (event.button === 1 || (event.button === 0 && event.altKey)) {
     stepClue(cell);
@@ -587,6 +610,27 @@ els.canvas.addEventListener("pointerdown", (event) => {
 
 els.canvas.addEventListener("pointermove", (event) => {
   const cell = cellAt(event);
+
+  if (ui.tap) {
+    const travelled =
+      Math.abs(event.clientX - ui.tap.x) > TAP_MOVE_PX ||
+      Math.abs(event.clientY - ui.tap.y) > TAP_MOVE_PX;
+    if (!travelled) return;
+    // the finger moved: this is a stroke, not a tap. The first cell decides
+    // whether the stroke marks walls or empties, exactly like a mouse drag.
+    const origin = ui.tap.cell;
+    const left = ui.cells && ui.cells[origin] === WALL ? 0 : 1;
+    ui.tap = null;
+    ui.painting = true;
+    ui.lastPaintCell = origin;
+    fire(`paint begin ${origin % ui.cols} ${Math.floor(origin / ui.cols)} ${left}`);
+    if (cell >= 0 && cell !== origin) {
+      ui.lastPaintCell = cell;
+      fire(`paint move ${cell % ui.cols} ${Math.floor(cell / ui.cols)}`);
+    }
+    return;
+  }
+
   if (ui.painting) {
     if (cell < 0 || cell === ui.lastPaintCell) return;
     ui.lastPaintCell = cell;
@@ -606,6 +650,15 @@ els.canvas.addEventListener("pointermove", (event) => {
 });
 
 function endStroke(event) {
+  if (ui.tap) {
+    // a tap that never travelled: cycle the mark (or step a clue)
+    const cell = ui.tap.cell;
+    ui.tap = null;
+    ui.hover = cell;
+    fire(`tap ${cell % ui.cols} ${Math.floor(cell / ui.cols)}`);
+    render();
+    return;
+  }
   if (!ui.painting) return;
   ui.painting = false;
   fire("paint end");
@@ -615,8 +668,13 @@ function endStroke(event) {
   }
 }
 
+function cancelStroke() {
+  ui.tap = null;
+  endStroke(null);
+}
+
 els.canvas.addEventListener("pointerup", endStroke);
-els.canvas.addEventListener("pointercancel", endStroke);
+els.canvas.addEventListener("pointercancel", cancelStroke);
 els.canvas.addEventListener("pointerleave", () => {
   if (ui.hover !== -1) {
     ui.hover = -1;
@@ -686,6 +744,7 @@ window.addEventListener("blur", () => {
   ui.shift = false;
   ui.suppressAnchor = true;
   ui.painting = false;
+  ui.tap = null;
   render();
 });
 

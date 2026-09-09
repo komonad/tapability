@@ -19,7 +19,7 @@ resized below the control column plus a 3x3 board at 11 pixels per cell.
 cargo run --release                 # play in a Win32 window
 cargo run --release -- --print 1    # print a puzzle + its solution
 cargo run --release -- --bench 20   # time 20 generations
-cargo test --workspace --release    # 50 tests, incl. uniqueness + minimality
+cargo test --workspace --release    # 54 tests, incl. uniqueness + minimality
 
 pwsh -File build-web.ps1            # build web/tapa.wasm, then check the ABI
 node tools/serve.cjs                # then open http://127.0.0.1:8080/
@@ -50,6 +50,9 @@ Fill every cell black or white:
 | Alt + left click a clue | the same, for mice and trackpads without a middle button |
 | drag the size slider | pick a board size; the puzzle is rebuilt when you release it |
 | resize the window | the grid rescales to fill the space left of the control column |
+| tap a cell (touch) | cycles the mark: wall -> empty -> unmarked |
+| drag a finger (touch) | paints a stroke; the first cell decides whether it marks or clears |
+| tap a clue (touch) | steps that one clue, like a middle click |
 | Shift + hover | spotlight the wall group under the cursor |
 | N | new puzzle |
 | R | clear all marks (also undoable) |
@@ -168,11 +171,16 @@ reply buffer, and `web/worker.js` copies commands in and parses replies out. The
 only requirement is the `wasm32-unknown-unknown` standard library, which
 `build-web.ps1` adds if it is missing.
 
-Everything the desktop game does is in the browser too:
+Everything the desktop game does is in the browser too, including a touch
+build: a finger that taps a cell cycles it wall -> empty -> unmarked, a finger
+that travels paints a stroke, and tapping a clue steps just that clue, so no
+middle button is needed.
 
 | feature | where |
 |---|---|
 | left click wall / right click empty / click again to clear | canvas pointer events |
+| tap a cell to cycle wall -> empty -> clear, drag to paint | `tap` command, `TAP_MOVE_PX` in `web/app.js` |
+| tap a clue to step it | `tap` falls through to `cluestep` |
 | drag a whole stroke, gaps filled in | `line_cells` in the engine |
 | wall-group spotlight on paint, and on Shift + hover | `floodFill` in `web/app.js` |
 | red clues, red sealed-off walls, red 2x2, red wrong cells | `live_errors` in the engine, drawn as outlines |
@@ -312,7 +320,7 @@ Windows, `--release`, 20x20, 20 seeds:
 | black cells | 165-199 of 400 (41-50%) |
 | biggest clue-free patch | 8-39 cells (2-10% of the board) |
 | clue-free rows / columns | 0-1 of 20 |
-| test suite | 50 tests, ~0.7 s release |
+| test suite | 54 tests, ~1.2 s release |
 
 The same engine in WebAssembly (`web/tapa.wasm`, 144 KiB, Chrome 152): 20x20,
 5 seeds, 813 ms average, 0 failures - within noise of the native build. The page

@@ -18,6 +18,7 @@
 //! paint end                             finish the stroke
 //! undo | reset | check | solution | onestep
 //! cluestep <x> <y>                      single-clue step (middle click)
+//! tap <x> <y>                           one touch tap: cycle the cell's mark
 //! print [count]                         generate and render puzzles as text
 //! bench [count]                         time N generations
 //! ```
@@ -275,9 +276,33 @@ impl Engine {
         applied
     }
 
-    /// Middle click on a clue: deduce only what that single clue forces now.
-    fn clue_step_at(&mut self, x: i64, y: i64) {
+    /// One tap on a touch screen: unmarked -> wall -> empty -> unmarked.
+    /// Clue cells are never marked, so a tap on one steps that clue instead.
+    fn tap_cell(&mut self, x: i64, y: i64) {
         if self.show_solution {
+            return;
+        }
+        let Some(idx) = self.cell_index(x, y) else {
+            return;
+        };
+        let Some(puzzle) = self.puzzle.as_ref() else {
+            return;
+        };
+        if puzzle.is_clue(idx) {
+            self.clue_step_at(x, y);
+            return;
+        }
+        let next = match self.cells[idx] {
+            BLACK => WHITE,
+            WHITE => UNKNOWN,
+            _ => BLACK,
+        };
+        self.set_cell(idx, next);
+        self.anchor = if next == BLACK { Some(idx) } else { None };
+    }
+
+    /// Middle click on a clue: deduce only what that single clue forces now.
+    fn clue_step_at(&mut self, x: i64, y: i64) {        if self.show_solution {
             return;
         }
         let Some(cell) = self.cell_index(x, y) else {
@@ -529,6 +554,11 @@ impl Engine {
             "check" => self.check(),
             "solution" => self.toggle_solution(),
             "onestep" => self.one_step(),
+            "tap" => {
+                let x = parse_i64(parts.next())?;
+                let y = parse_i64(parts.next())?;
+                self.tap_cell(x, y);
+            }
             "cluestep" => {
                 let x = parse_i64(parts.next())?;
                 let y = parse_i64(parts.next())?;
@@ -829,6 +859,63 @@ mod tests {
         assert!(with_fields.contains("\"fields\":["), "{with_fields}");
         assert!(with_fields.contains("\"key\":\"max_attempts\""), "{with_fields}");
         assert!(with_fields.contains("\"help\":\""), "{with_fields}");
+    }
+
+    #[test]
+    fn a_tap_cycles_wall_empty_unmarked() {
+        let mut engine = engine_with_puzzle(8, 21);
+        let free = (0..64)
+            .find(|&i| !engine.puzzle.as_ref().unwrap().is_clue(i))
+            .unwrap();
+        let (x, y) = engine.puzzle.as_ref().unwrap().grid.xy(free);
+
+        engine.tap_cell(x as i64, y as i64);
+        assert_eq!(engine.cells[free], BLACK, "first tap marks a wall");
+        assert_eq!(engine.anchor, Some(free), "the new wall is spotlighted");
+
+        engine.tap_cell(x as i64, y as i64);
+        assert_eq!(engine.cells[free], WHITE, "second tap marks empty");
+        assert_eq!(engine.anchor, None);
+
+        engine.tap_cell(x as i64, y as i64);
+        assert_eq!(engine.cells[free], UNKNOWN, "third tap clears the cell");
+
+        // every tap is a normal, undoable move
+        engine.undo();
+        assert_eq!(engine.cells[free], WHITE);
+        engine.undo();
+        assert_eq!(engine.cells[free], BLACK);
+        engine.undo();
+        assert_eq!(engine.cells[free], UNKNOWN);
+    }
+
+    #[test]
+    fn a_tap_on_a_clue_steps_it_instead_of_marking_it() {
+        let mut engine = engine_with_puzzle(10, 22);
+        let clue = engine.puzzle.as_ref().unwrap().clues[0].0;
+        let (x, y) = engine.puzzle.as_ref().unwrap().grid.xy(clue);
+        let before = engine.cells.clone();
+
+        engine.tap_cell(x as i64, y as i64);
+
+        assert_eq!(engine.cells[clue], before[clue], "the clue cell itself is untouched");
+        let filled = (0..engine.cells.len())
+            .filter(|&i| engine.cells[i] != before[i])
+            .count();
+        assert!(filled > 0, "the clue step should fill something: {}", engine.status);
+        assert!(engine.status.starts_with("Clue ("), "{}", engine.status);
+    }
+
+    #[test]
+    fn taps_do_nothing_while_the_solution_is_shown() {
+        let mut engine = engine_with_puzzle(8, 23);
+        let free = (0..64)
+            .find(|&i| !engine.puzzle.as_ref().unwrap().is_clue(i))
+            .unwrap();
+        let (x, y) = engine.puzzle.as_ref().unwrap().grid.xy(free);
+        engine.toggle_solution();
+        engine.tap_cell(x as i64, y as i64);
+        assert_eq!(engine.cells[free], UNKNOWN);
     }
 
     #[test]

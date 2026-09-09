@@ -486,6 +486,109 @@ async function main() {
   check("print shows a board and its solution", /solution:/.test(printText), printText.slice(0, 120));
   check("print verifies uniqueness", /solutions=1/.test(printText), printText.slice(-200));
 
+  // ---- touch: a tap cycles the mark, a drag paints ------------------------
+  // the board was resized and zoomed since `point()` was built, so re-measure
+  const geom2 = await evaluate(`(() => {
+    const r = document.getElementById("board").getBoundingClientRect();
+    return { left: r.left, top: r.top, cell: ui.cell, cols: ui.cols };
+  })()`);
+  const point2 = (index) => ({
+    x: geom2.left + (index % geom2.cols) * geom2.cell + geom2.cell / 2,
+    y: geom2.top + Math.floor(index / geom2.cols) * geom2.cell + geom2.cell / 2,
+  });
+
+  await call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+  const touchCell = await evaluate(`(() => {
+    for (let i = 0; i < ui.cells.length; i += 1) {
+      if (!ui.clues.has(i) && ui.cells[i] === 0) return i;
+    }
+    return -1;
+  })()`);
+  const touchPoint = point2(touchCell);
+  const touch = (type, x, y) =>
+    call("Input.dispatchTouchEvent", {
+      type,
+      touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1 }],
+    });
+
+  await touch("touchStart", touchPoint.x, touchPoint.y);
+  await touch("touchEnd");
+  await sleep(150);
+  check(
+    "the first tap marks a wall",
+    (await evaluate(`ui.cells[${touchCell}]`)) === 1,
+    String(await evaluate(`ui.cells[${touchCell}]`)),
+  );
+
+  await touch("touchStart", touchPoint.x, touchPoint.y);
+  await touch("touchEnd");
+  await sleep(150);
+  check(
+    "the second tap marks empty",
+    (await evaluate(`ui.cells[${touchCell}]`)) === 2,
+    String(await evaluate(`ui.cells[${touchCell}]`)),
+  );
+
+  await touch("touchStart", touchPoint.x, touchPoint.y);
+  await touch("touchEnd");
+  await sleep(150);
+  check(
+    "the third tap clears the cell",
+    (await evaluate(`ui.cells[${touchCell}]`)) === 0,
+    String(await evaluate(`ui.cells[${touchCell}]`)),
+  );
+
+  // a finger that travels is a stroke, not a tap
+  const dragFrom = await evaluate(`(() => {
+    for (let i = 0; i < ui.cells.length - 3; i += 1) {
+      if (i % ui.cols > ui.cols - 4) continue;
+      if ([i, i + 1, i + 2, i + 3].some((k) => ui.clues.has(k) || ui.cells[k] !== 0)) continue;
+      return i;
+    }
+    return -1;
+  })()`);
+  check("found four free cells for a touch stroke", dragFrom >= 0, String(dragFrom));
+  const dragStart = point2(dragFrom);
+  const dragEnd = point2(dragFrom + 3);
+  await touch("touchStart", dragStart.x, dragStart.y);
+  for (let step = 1; step <= 4; step += 1) {
+    await call("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [
+        {
+          x: dragStart.x + ((dragEnd.x - dragStart.x) * step) / 4,
+          y: dragStart.y,
+          id: 1,
+        },
+      ],
+    });
+  }
+  await touch("touchEnd");
+  await sleep(200);
+  const touched = await evaluate(
+    `[${dragFrom}, ${dragFrom + 1}, ${dragFrom + 2}, ${dragFrom + 3}].map((i) => ui.cells[i]).join("")`,
+  );
+  check("a travelling finger paints a stroke", touched === "1111", touched);
+
+  // tapping a clue steps it, so the feature is reachable without a middle button
+  const touchClue = await evaluate(`[...ui.clues.keys()][0]`);
+  const touchCluePoint = point2(touchClue);
+  await evaluate(`setStatus("(cleared)", "")`);
+  await touch("touchStart", touchCluePoint.x, touchCluePoint.y);
+  await touch("touchEnd");
+  await sleep(250);
+  const touchClueStatus = await evaluate(`document.getElementById("status").textContent`);
+  check(
+    "tapping a clue steps it",
+    new RegExp(`Clue \\(\\d+,\\d+\\)`).test(touchClueStatus),
+    touchClueStatus,
+  );
+  check(
+    "tapping a clue leaves the clue cell itself alone",
+    (await evaluate(`ui.cells[${touchClue}]`)) === 2,
+  );
+  await call("Emulation.setTouchEmulationEnabled", { enabled: false });
+
   // ---- no stray JavaScript errors ----------------------------------------
   check("no uncaught JavaScript errors", consoleErrors.length === 0, consoleErrors.join(" | "));
 
