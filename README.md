@@ -171,6 +171,13 @@ reply buffer, and `web/worker.js` copies commands in and parses replies out. The
 only requirement is the `wasm32-unknown-unknown` standard library, which
 `build-web.ps1` adds if it is missing.
 
+The page is translated: Simplified Chinese by default, English one click away in
+the header, and the choice is remembered. The engine never sends prose for the
+player to read - it reports a status *key* with its numbers (`statusKey`,
+`statusArgs`) and structured generation statistics (`genStats`), so every line
+in the UI, including the rules introduction under the title, comes from
+`web/i18n.js`.
+
 Everything the desktop game does is in the browser too, including a touch
 build: a finger that taps a cell cycles it wall -> empty -> unmarked, a finger
 that travels paints a stroke, and tapping a clue steps just that clue, so no
@@ -242,6 +249,7 @@ node tools/serve.cjs 8081 some/dir   # serve another directory on another port
 | `src/cli.rs` | `--print` / `--bench` |
 | `wasm/src/lib.rs` | game state plus the command/JSON bridge, compiled to WebAssembly |
 | `web/index.html`, `web/style.css`, `web/app.js`, `web/worker.js` | the browser front end |
+| `web/i18n.js` | the Simplified Chinese and English strings |
 | `tools/*.cjs` | static server, wasm ABI smoke test, headless-browser check |
 | `tools/native-check.ps1` | desktop GUI check: posts real mouse messages and compares screenshots |
 | `build-web.ps1` | builds and installs `web/tapa.wasm` |

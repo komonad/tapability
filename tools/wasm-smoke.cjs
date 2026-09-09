@@ -57,8 +57,20 @@ check("cells are the board size", puzzle.cells.length === 64, String(puzzle.cell
 check("clues are present", puzzle.clues.length > 0, puzzle.clues);
 check("clues are sorted indices", /^\d+:\d+;/.test(puzzle.clues), puzzle.clues);
 check("seed is echoed", puzzle.seed === 12345, String(puzzle.seed));
-check("status reports cells left", /cell/.test(puzzle.status), puzzle.status);
-check("generation stats shown", /clues/.test(puzzle.stats), puzzle.stats);
+check("status reports cells left", puzzle.statusKey === "cells_left", puzzle.statusKey);
+check(
+  "generation stats are structured, not prose",
+  puzzle.genStats &&
+    puzzle.genStats.clues > 0 &&
+    puzzle.genStats.w === 8 &&
+    puzzle.genStats.ms >= 0,
+  JSON.stringify(puzzle.genStats),
+);
+check(
+  "the status carries its numbers",
+  Array.isArray(puzzle.statusArgs) && puzzle.statusArgs.length === 1 && puzzle.statusArgs[0] > 0,
+  JSON.stringify(puzzle.statusArgs),
+);
 
 // clue cells start empty (2), everything else undecided (0)
 const clueIndices = new Set(

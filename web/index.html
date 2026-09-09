@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -10,8 +10,14 @@
     <div class="app">
       <main class="board-area">
         <header class="header">
-          <h1 id="title">Tapa</h1>
-          <p id="status" class="status">Loading the WebAssembly engine...</p>
+          <div class="title-row">
+            <h1 id="title">Tapa</h1>
+            <label class="lang">
+              <select id="lang" aria-label="Language"></select>
+            </label>
+          </div>
+          <p id="intro" class="intro" data-i18n="intro"></p>
+          <p id="status" class="status"></p>
         </header>
 
         <div id="stage" class="stage">
@@ -19,65 +25,69 @@
         </div>
 
         <footer class="footer">
-          <p class="hint">
-            Left click: wall &middot; right click: empty &middot; click the same mark again:
-            clear &middot; drag: paint a stroke
-          </p>
-          <p class="hint">
-            Shift + hover: spotlight a wall group &middot; middle click or Alt + click a clue:
-            step just it &middot; Z: undo (hold to repeat)
-          </p>
-          <p class="hint">
-            Touch: tap a cell to cycle wall &rarr; empty &rarr; clear &middot; drag to paint a
-            stroke &middot; tap a clue to step it
-          </p>
+          <p class="hint" data-i18n="hint.mouse"></p>
+          <p class="hint" data-i18n="hint.keys"></p>
+          <p class="hint" data-i18n="hint.touch"></p>
           <p id="info" class="info"></p>
           <p id="stats" class="stats"></p>
         </footer>
       </main>
 
       <aside class="panel">
-        <h2 class="panel-title">Controls</h2>
+        <h2 class="panel-title" data-i18n="panel.controls"></h2>
         <div class="buttons">
-          <button id="btn-new" type="button">New puzzle <kbd>N</kbd></button>
-          <button id="btn-clear" type="button">Clear <kbd>R</kbd></button>
-          <button id="btn-check" type="button">Check <kbd>C</kbd></button>
-          <button id="btn-solution" type="button">Solution <kbd>S</kbd></button>
-          <button id="btn-onestep" type="button">One step <kbd>D</kbd></button>
-          <button id="btn-cluestep" type="button">Step one clue</button>
-          <button id="btn-undo" type="button">Undo <kbd>Z</kbd></button>
+          <button id="btn-new" type="button">
+            <span data-i18n="btn.new"></span><kbd>N</kbd>
+          </button>
+          <button id="btn-clear" type="button">
+            <span data-i18n="btn.clear"></span><kbd>R</kbd>
+          </button>
+          <button id="btn-check" type="button">
+            <span data-i18n="btn.check"></span><kbd>C</kbd>
+          </button>
+          <button id="btn-solution" type="button">
+            <span data-i18n="btn.solution"></span><kbd>S</kbd>
+          </button>
+          <button id="btn-onestep" type="button">
+            <span data-i18n="btn.onestep"></span><kbd>D</kbd>
+          </button>
+          <button id="btn-cluestep" type="button">
+            <span data-i18n="btn.cluestep"></span>
+          </button>
+          <button id="btn-undo" type="button">
+            <span data-i18n="btn.undo"></span><kbd>Z</kbd>
+          </button>
         </div>
 
-        <h2 class="panel-title">Generation</h2>
+        <h2 class="panel-title" data-i18n="panel.generation"></h2>
         <div id="fields" class="fields"></div>
         <div class="buttons row">
-          <button id="btn-apply" type="button">Apply &amp; new puzzle</button>
-          <button id="btn-defaults" type="button">Defaults</button>
+          <button id="btn-apply" type="button"><span data-i18n="btn.apply"></span></button>
+          <button id="btn-defaults" type="button"><span data-i18n="btn.defaults"></span></button>
         </div>
-        <p id="help" class="help">
-          Hover a setting to read what it does.
-        </p>
+        <p id="help" class="help"></p>
         <p id="message" class="message"></p>
 
-        <h2 class="panel-title">Batch tools</h2>
+        <h2 class="panel-title" data-i18n="panel.batch"></h2>
         <div class="buttons row">
-          <button id="btn-print" type="button">Print 1</button>
-          <button id="btn-bench" type="button">Bench 3</button>
+          <button id="btn-print" type="button"><span data-i18n="btn.print"></span></button>
+          <button id="btn-bench" type="button"><span data-i18n="btn.bench"></span></button>
         </div>
-        <p class="help">
-          Both run inside WebAssembly on the worker thread, so the board stays responsive.
-        </p>
+        <p class="help" data-i18n="batch.help"></p>
       </aside>
     </div>
 
     <section id="output-wrap" class="output-wrap" hidden>
       <div class="output-head">
         <span id="output-title">Output</span>
-        <button id="btn-output-close" type="button">Close</button>
+        <button id="btn-output-close" type="button">
+          <span data-i18n="output.close"></span>
+        </button>
       </div>
       <pre id="output"></pre>
     </section>
 
+    <script src="i18n.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

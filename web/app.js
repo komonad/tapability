@@ -42,15 +42,34 @@ const MAX_SIZE = 60;
 /** How far a finger may wander and still count as a tap rather than a stroke. */
 const TAP_MOVE_PX = 10;
 const STORAGE_KEY = "tapa.settings";
+const LANG_KEY = "tapa.lang";
+/** Simplified Chinese is the default, whatever the browser asks for. */
+const DEFAULT_LANG = "zh-CN";
 
-const ZOOM_HELP =
-  "How many pixels one board cell is drawn at. It changes the size of the picture, " +
-  "not the number of cells. Fit draws the board as large as the window allows.";
+/* ---- translations ------------------------------------------------------ */
+
+const translations = window.TAPA_I18N || { "zh-CN": {} };
+const i18n = { lang: DEFAULT_LANG, dict: translations[DEFAULT_LANG] || {} };
+
+/** Look a string up in the current language; fall back to the key. */
+function t(key) {
+  return i18n.dict[key] ?? key;
+}
+
+/** Fill `{0}`, `{1}`, ... in a template. */
+function fill(template, args) {
+  return String(template).replace(/\{(\d+)\}/g, (_, index) => {
+    const value = (args || [])[Number(index)];
+    return value === undefined || value === null ? "" : String(value);
+  });
+}
 
 /* ---- elements ---------------------------------------------------------- */
 
 const els = {
   title: document.getElementById("title"),
+  intro: document.getElementById("intro"),
+  lang: document.getElementById("lang"),
   status: document.getElementById("status"),
   info: document.getElementById("info"),
   stats: document.getElementById("stats"),
@@ -179,17 +198,23 @@ function updateChrome(state) {
   if (state.w > 0) {
     els.title.textContent = `Tapa ${state.w}x${state.h}`;
   }
-  setStatus(state.status, state.kind === 2 ? "bad" : state.kind === 1 ? "good" : "");
+  // the engine reports a language-neutral key plus its numbers
+  const statusText = state.statusKey
+    ? fill(t(`status.${state.statusKey}`), state.statusArgs)
+    : state.status;
+  setStatus(statusText, state.kind === 2 ? "bad" : state.kind === 1 ? "good" : "");
 
   if (state.w > 0) {
     const broken = state.errorsCells && state.errorsCells.includes("1");
-    els.info.textContent = `seed ${state.seed}    ${state.clueCount} clues${
-      broken ? "   red = rule broken" : ""
-    }`;
+    els.info.textContent =
+      fill(t("info.seed"), [state.seed, state.clueCount]) + (broken ? t("info.broken") : "");
   } else {
     els.info.textContent = "";
   }
-  els.stats.textContent = state.stats ? `last generation: ${state.stats}` : "";
+  const stats = state.genStats;
+  els.stats.textContent = stats
+    ? fill(t("stats"), [stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes])
+    : "";
 
   const problem = state.error || state.settingsError || "";
   els.message.textContent = problem;
@@ -213,7 +238,7 @@ function updateChrome(state) {
   els["btn-undo"].disabled = !hasPuzzle || !state.canUndo;
 
   if (state.output) {
-    showOutput(ui.outputTitle || "Output", state.output);
+    showOutput(ui.outputTitle || t("panel.batch"), state.output);
   }
 }
 
@@ -695,7 +720,7 @@ els.canvas.addEventListener("mousedown", (event) => {
 function stepClue(cell) {
   const index = typeof cell === "number" && cell >= 0 ? cell : ui.lastClue;
   if (index < 0) {
-    setStatus("Hover a clue cell first, then step it.", "bad");
+    setStatus(t("status.hover_clue"), "bad");
     return;
   }
   if (ui.clues.has(index)) {
@@ -781,16 +806,17 @@ function buildFields(fields) {
   for (const field of fields) {
     const row = document.createElement("div");
     row.className = "field";
+    row.dataset.field = field.key;
 
     const label = document.createElement("label");
-    label.textContent = field.label;
+    label.textContent = fieldLabel(field);
     label.htmlFor = `f-${field.key}`;
 
     const input = document.createElement("input");
     input.id = `f-${field.key}`;
     input.dataset.key = field.key;
     input.value = field.value;
-    input.title = field.help;
+    input.title = fieldHelp(field);
     input.spellcheck = false;
     input.autocomplete = "off";
 
@@ -804,14 +830,26 @@ function buildFields(fields) {
   buildZoomRow();
 }
 
+/** A setting's label in the current language, falling back to the engine's. */
+function fieldLabel(field) {
+  const translated = t(`field.${field.key}.label`);
+  return translated === `field.${field.key}.label` ? field.label : translated;
+}
+
+function fieldHelp(field) {
+  const translated = t(`field.${field.key}.help`);
+  return translated === `field.${field.key}.help` ? field.help : translated;
+}
+
 /** The cell-size (zoom) slider: it changes how big the board is drawn, not how
  *  many cells it has. "Fit" goes back to filling the window. */
 function buildZoomRow() {
   const row = document.createElement("div");
   row.className = "field zoom";
+  row.dataset.field = "zoom";
 
   const label = document.createElement("label");
-  label.textContent = "Cell size (px)";
+  label.textContent = t("zoom.label");
   label.htmlFor = "zoom-slider";
 
   const slider = document.createElement("input");
@@ -821,13 +859,13 @@ function buildZoomRow() {
   slider.max = String(MAX_CELL);
   slider.step = "1";
   slider.value = String(ui.cell);
-  slider.title = ZOOM_HELP;
+  slider.title = t("zoom.help");
 
   const fit = document.createElement("button");
   fit.type = "button";
   fit.id = "btn-fit";
-  fit.textContent = "Fit";
-  fit.title = "Draw the board as large as the window allows";
+  fit.textContent = t("zoom.fit");
+  fit.title = t("zoom.help");
 
   slider.addEventListener("input", () => {
     ui.zoom = Number(slider.value);
@@ -840,7 +878,7 @@ function buildZoomRow() {
 
   row.append(label, slider, fit);
   row.addEventListener("mouseenter", () =>
-    showHelp({ label: "Cell size", help: ZOOM_HELP }, row),
+    showHelp({ key: "zoom", label: t("zoom.label"), help: t("zoom.help") }, row),
   );
   row.addEventListener("mouseleave", () => showHelp(null, null));
   els.fields.append(row);
@@ -850,9 +888,13 @@ function showHelp(field, row) {
   for (const other of els.fields.children) {
     other.classList.toggle("active", other === row);
   }
-  els.help.textContent = field
-    ? `${field.label}: ${field.help}`
-    : "Hover a setting to read what it does.";
+  if (!field) {
+    els.help.textContent = t("help.default");
+    return;
+  }
+  const label = field.key === "zoom" ? t("zoom.label") : fieldLabel(field);
+  const help = field.key === "zoom" ? t("zoom.help") : fieldHelp(field);
+  els.help.textContent = `${label}: ${help}`;
 }
 
 /** Write the engine's settings back into the inputs (after Defaults, or on load). */
@@ -947,7 +989,7 @@ function newSeed() {
 
 async function generate(seed) {
   setBusy(true);
-  setStatus("Generating a puzzle with a unique solution...", "");
+  setStatus(t("status.generating"), "");
   const state = await send(`generate ${seed}`);
   setBusy(false);
   if (state.fatal) {
@@ -964,14 +1006,10 @@ function newPuzzle() {
 
 async function batch(kind) {
   const count = kind === "bench" ? 3 : 1;
-  ui.outputTitle = kind === "bench" ? `Bench: ${count} generations` : "Print: 1 puzzle";
+  ui.outputTitle =
+    kind === "bench" ? fill(t("output.bench"), [count]) : t("output.print");
   setBusy(true);
-  setStatus(
-    kind === "bench"
-      ? `Benchmarking ${count} generations inside WebAssembly...`
-      : "Generating a puzzle to print...",
-    "",
-  );
+  setStatus(kind === "bench" ? fill(t("output.bench"), [count]) : t("output.print"), "");
   const state = await send(`${kind} ${count}`);
   setBusy(false);
   if (state.fatal) {
@@ -979,6 +1017,75 @@ async function batch(kind) {
     return;
   }
   applyState(state);
+}
+
+/* ---- language ---------------------------------------------------------- */
+
+function readLang() {
+  try {
+    const saved = window.localStorage.getItem(LANG_KEY);
+    if (saved && translations[saved]) return saved;
+  } catch {
+    /* private mode */
+  }
+  return DEFAULT_LANG;
+}
+
+function buildLangSelect() {
+  const select = els.lang;
+  if (!select) return;
+  select.textContent = "";
+  for (const code of Object.keys(translations)) {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = translations[code].name || code;
+    select.append(option);
+  }
+  select.value = i18n.lang;
+  select.addEventListener("change", () => setLanguage(select.value));
+}
+
+/** Switch language: static text, settings labels and the chrome all follow. */
+function setLanguage(lang, persist = true) {
+  if (!translations[lang]) lang = DEFAULT_LANG;
+  i18n.lang = lang;
+  i18n.dict = translations[lang];
+  if (persist) {
+    try {
+      window.localStorage.setItem(LANG_KEY, lang);
+    } catch {
+      /* private mode */
+    }
+  }
+  document.documentElement.lang = lang;
+  if (els.lang && els.lang.value !== lang) {
+    els.lang.value = lang;
+  }
+
+  for (const element of document.querySelectorAll("[data-i18n]")) {
+    element.textContent = t(element.dataset.i18n);
+  }
+  for (const row of els.fields.children) {
+    const key = row.dataset.field;
+    if (!key) continue;
+    const label = row.querySelector("label");
+    const input = row.querySelector("input");
+    if (key === "zoom") {
+      if (label) label.textContent = t("zoom.label");
+      if (input) input.title = t("zoom.help");
+      const fit = row.querySelector("button");
+      if (fit) fit.textContent = t("zoom.fit");
+    } else {
+      const field = (ui.fields || []).find((f) => f.key === key);
+      if (field && label) label.textContent = fieldLabel(field);
+      if (field && input) input.title = fieldHelp(field);
+    }
+  }
+  els.help.textContent = t("help.default");
+  if (ui.state) {
+    updateChrome(ui.state);
+  }
+  render();
 }
 
 /* ---- wiring ------------------------------------------------------------ */
@@ -997,7 +1104,9 @@ els["btn-bench"].addEventListener("click", () => batch("bench"));
 els.outputClose.addEventListener("click", hideOutput);
 
 async function start() {
-  setStatus("Loading the WebAssembly engine...", "");
+  setLanguage(readLang(), false);
+  buildLangSelect();
+  setStatus(t("status.generating"), "");
   const init = await send("init");
   if (init.fatal) {
     setStatus(`cannot start the engine: ${init.error}`, "bad");

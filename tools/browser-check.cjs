@@ -118,8 +118,10 @@ async function main() {
     title: document.title,
     heading: document.getElementById("title").textContent,
     status: document.getElementById("status").textContent,
+    statusKey: ui.state.statusKey,
     info: document.getElementById("info").textContent,
     stats: document.getElementById("stats").textContent,
+    genStats: ui.state.genStats,
     cols: ui.cols, rows: ui.rows, cell: ui.cell,
     clues: ui.clues.size,
     seed: ui.state.seed,
@@ -133,13 +135,84 @@ async function main() {
   );
   check("title is Tapa", summary.title === "Tapa", summary.title);
   check("heading shows the board size", /^Tapa \d+x\d+$/.test(summary.heading), summary.heading);
-  check("status reports cells left", /cell/.test(summary.status), summary.status);
+  check(
+    "status reports cells left",
+    summary.statusKey === "cells_left",
+    summary.statusKey,
+  );
   check("clues are present", summary.clues > 0, String(summary.clues));
   check("footer does not leak the wall count", !summary.hasWallCount, summary.info);
-  check("footer shows the seed and clue count", /seed \d+\s+\d+ clues/.test(summary.info), summary.info);
-  check("generation stats are shown", /clues, \d+x\d+/.test(summary.stats), summary.stats);
+  check(
+    "footer shows the seed and clue count",
+    summary.info.includes(String(summary.seed)) && summary.info.includes(String(summary.clues)),
+    summary.info,
+  );
+  check(
+    "generation stats are structured",
+    summary.genStats && summary.genStats.clues === summary.clues && summary.genStats.w > 0,
+    JSON.stringify(summary.genStats),
+  );
   check("canvas has a backing store", summary.canvasW > 100, String(summary.canvasW));
   check("settings column has every field", summary.fields === 9, String(summary.fields));
+
+  // ---- language: Simplified Chinese by default, switchable, remembered ----
+  const zh = await evaluate(`({
+    htmlLang: document.documentElement.lang,
+    select: document.getElementById("lang").value,
+    intro: document.getElementById("intro").textContent.trim(),
+    newButton: document.querySelector("#btn-new span").textContent.trim(),
+    panelTitle: document.querySelector(".panel-title").textContent.trim(),
+    status: document.getElementById("status").textContent,
+    stats: document.getElementById("stats").textContent,
+    saved: localStorage.getItem("tapa.lang"),
+  })`);
+  check(
+    "the page starts in Simplified Chinese",
+    zh.htmlLang === "zh-CN" && zh.select === "zh-CN",
+    JSON.stringify({ lang: zh.htmlLang, select: zh.select }),
+  );
+  check("a rules introduction sits under the title", zh.intro.length > 40, zh.intro);
+  check("the introduction is in Chinese", /[\u4e00-\u9fff]/.test(zh.intro), zh.intro);
+  check("the introduction describes the rules", /数字|黑格/.test(zh.intro), zh.intro);
+  check("buttons are translated", zh.newButton === "新题目", zh.newButton);
+  check("panel headings are translated", zh.panelTitle === "操作", zh.panelTitle);
+  check("the status line is translated", /[\u4e00-\u9fff]/.test(zh.status), zh.status);
+  check("the generation stats line is translated", /[\u4e00-\u9fff]/.test(zh.stats), zh.stats);
+
+  await evaluate(`(() => {
+    const select = document.getElementById("lang");
+    select.value = "en";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await sleep(200);
+  const en = await evaluate(`({
+    htmlLang: document.documentElement.lang,
+    intro: document.getElementById("intro").textContent.trim(),
+    newButton: document.querySelector("#btn-new span").textContent.trim(),
+    status: document.getElementById("status").textContent,
+    stats: document.getElementById("stats").textContent,
+    help: document.getElementById("help").textContent.trim(),
+    sizeLabel: document.querySelector('[data-field="size"] label').textContent.trim(),
+    saved: localStorage.getItem("tapa.lang"),
+  })`);
+  check("switching to English translates the introduction", /^Fill every cell/.test(en.intro), en.intro);
+  check("switching to English translates the buttons", en.newButton === "New puzzle", en.newButton);
+  check("switching to English translates the settings labels", en.sizeLabel === "Board size (3-60)", en.sizeLabel);
+  check("switching to English translates the status", /cell/.test(en.status), en.status);
+  check("switching to English translates the stats line", /last generation/.test(en.stats), en.stats);
+  check("the language choice is remembered", en.saved === "en", String(en.saved));
+
+  // back to Chinese for the rest of the run and the screenshot
+  await evaluate(`(() => {
+    const select = document.getElementById("lang");
+    select.value = "zh-CN";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await sleep(200);
+  check(
+    "switching back restores Chinese",
+    await evaluate(`document.getElementById("intro").textContent.includes("黑格")`),
+  );
 
   // the canvas must actually be painted: look for wall-coloured pixels
   const painted = await evaluate(`(() => {
@@ -275,18 +348,18 @@ async function main() {
   // ---- stepping a single clue: middle click, Alt + click, and the button ---
   const clueIndex = await evaluate(`[...ui.clues.keys()][0]`);
   const clueText = await evaluate(`ui.clues.get(${clueIndex})`);
-  const cluePattern = new RegExp(`Clue \\(\\d+,\\d+\\)`);
+  const clueKeys = ["clue_filled", "clue_forces_nothing"];
   const clearStatus = () => evaluate(`setStatus("(cleared)", "")`);
 
   await clearStatus();
   await mouse("mousePressed", clueIndex, "middle");
   await mouse("mouseReleased", clueIndex, "middle");
   await sleep(250);
-  const middleStatus = await evaluate(`document.getElementById("status").textContent`);
+  const middleKey = await evaluate(`ui.state.statusKey`);
   check(
     "middle click steps the clue under the cursor",
-    cluePattern.test(middleStatus),
-    `${middleStatus} (clue ${clueText})`,
+    clueKeys.includes(middleKey),
+    `${middleKey} (clue ${clueText})`,
   );
 
   await clearStatus();
@@ -294,19 +367,21 @@ async function main() {
   await call("Input.dispatchMouseEvent", { type: "mousePressed", ...alt, buttons: 1 });
   await call("Input.dispatchMouseEvent", { type: "mouseReleased", ...alt, buttons: 0 });
   await sleep(250);
-  const altStatus = await evaluate(`document.getElementById("status").textContent`);
-  check("Alt + click steps the clue too", cluePattern.test(altStatus), altStatus);
+  check(
+    "Alt + click steps the clue too",
+    clueKeys.includes(await evaluate(`ui.state.statusKey`)),
+    await evaluate(`ui.state.statusKey`),
+  );
 
   await clearStatus();
   await mouse("mouseMoved", clueIndex, "none");
   await sleep(80);
   await evaluate(`document.getElementById("btn-cluestep").click()`);
   await sleep(250);
-  const buttonStatus = await evaluate(`document.getElementById("status").textContent`);
   check(
     "the Step one clue button steps the hovered clue",
-    cluePattern.test(buttonStatus),
-    buttonStatus,
+    clueKeys.includes(await evaluate(`ui.state.statusKey`)),
+    await evaluate(`ui.state.statusKey`),
   );
 
   // a cell that is not a clue must be refused politely
@@ -318,8 +393,11 @@ async function main() {
   await mouse("mousePressed", notClueCell, "middle");
   await mouse("mouseReleased", notClueCell, "middle");
   await sleep(200);
-  const refused = await evaluate(`document.getElementById("status").textContent`);
-  check("stepping a non-clue cell is refused", /Middle-click a clue/.test(refused), refused);
+  check(
+    "stepping a non-clue cell is refused",
+    (await evaluate(`ui.state.statusKey`)) === "clue_only",
+    await evaluate(`ui.state.statusKey`),
+  );
 
   // ---- one step, check, solution -----------------------------------------
   // start from a clean board so every mark on it comes from the deduction
@@ -328,8 +406,8 @@ async function main() {
   await evaluate(`document.getElementById("btn-onestep").click()`);
   await waitFor(`!ui.busy`, "one step finishes");
   await sleep(80);
-  const oneStep = await evaluate(`document.getElementById("status").textContent`);
-  check("one step fills the clues' deductions", /One step: filled \d+ cell/.test(oneStep), oneStep);
+  const oneStepKey = await evaluate(`ui.state.statusKey`);
+  check("one step fills the clues' deductions", oneStepKey === "one_step_filled", oneStepKey);
 
   // every deduction must agree with the solution: ask the engine to reveal it
   const consistency = await evaluate(`(async () => {
@@ -350,8 +428,8 @@ async function main() {
   await evaluate(`document.getElementById("btn-check").click()`);
   await waitFor(`!ui.busy`, "check finishes");
   await sleep(80);
-  const checked = await evaluate(`document.getElementById("status").textContent`);
-  check("check reports on the marks", /wrong cell|No mistakes/.test(checked), checked);
+  const checkedKey = await evaluate(`ui.state.statusKey`);
+  check("check reports on the marks", ["check_ok", "check_wrong"].includes(checkedKey), checkedKey);
 
   await evaluate(`document.getElementById("btn-solution").click()`);
   await waitFor(`!ui.busy`, "solution shows");
@@ -577,10 +655,10 @@ async function main() {
   await touch("touchStart", touchCluePoint.x, touchCluePoint.y);
   await touch("touchEnd");
   await sleep(250);
-  const touchClueStatus = await evaluate(`document.getElementById("status").textContent`);
+  const touchClueStatus = await evaluate(`ui.state.statusKey`);
   check(
     "tapping a clue steps it",
-    new RegExp(`Clue \\(\\d+,\\d+\\)`).test(touchClueStatus),
+    ["clue_filled", "clue_forces_nothing"].includes(touchClueStatus),
     touchClueStatus,
   );
   check(

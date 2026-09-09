@@ -54,6 +54,16 @@ struct Drag {
     last: usize,
 }
 
+/// Numbers of the last generation, so the page can phrase them in its language.
+struct GenSummary {
+    clues: usize,
+    w: usize,
+    h: usize,
+    ms: f64,
+    attempts: usize,
+    nodes: u64,
+}
+
 struct Engine {
     settings: Settings,
     puzzle: Option<Puzzle>,
@@ -67,12 +77,16 @@ struct Engine {
     anchor: Option<usize>,
     drag: Option<Drag>,
     status: String,
+    /// Language-neutral name of `status` plus its numbers, so the page can
+    /// translate the line. The English text stays for the native build.
+    status_key: &'static str,
+    status_args: Vec<i64>,
     kind: Kind,
     solved: bool,
     show_solution: bool,
     seed: u64,
     /// One-line statistics of the last generation.
-    stats: String,
+    stats: Option<GenSummary>,
     /// Output of `print` / `bench`.
     output: String,
     /// Settings error from the last `set`.
@@ -95,14 +109,25 @@ impl Engine {
             anchor: None,
             drag: None,
             status: "Press New puzzle to generate one.".to_string(),
+            status_key: "idle",
+            status_args: Vec::new(),
             kind: Kind::Info,
             solved: false,
             show_solution: false,
             seed: 0,
-            stats: String::new(),
+            stats: None,
             output: String::new(),
             settings_error: String::new(),
         }
+    }
+
+    /// Set the status line: `key` names it for the page, `english` is what the
+    /// native build shows, `args` are the numbers `{0}`, `{1}`, ... stand for.
+    fn set_status(&mut self, kind: Kind, key: &'static str, args: &[i64], english: String) {
+        self.kind = kind;
+        self.status_key = key;
+        self.status_args = args.to_vec();
+        self.status = english;
     }
 
     /// Fresh player marks: clue cells start empty, everything else blank.
@@ -139,8 +164,12 @@ impl Engine {
         self.drag = None;
         self.wrong.clear();
         self.output.clear();
-        self.status = "Generating a puzzle with a unique solution...".to_string();
-        self.kind = Kind::Info;
+        self.set_status(
+            Kind::Info,
+            "generating",
+            &[],
+            "Generating a puzzle with a unique solution...".to_string(),
+        );
 
         let cfg = GenConfig::from_settings(&self.settings);
         let mut rng = Rng::new(seed);
@@ -152,15 +181,14 @@ impl Engine {
                 self.cells = Engine::fresh_marks(&puzzle);
                 self.wrong = vec![false; n];
                 self.puzzle = Some(puzzle);
-                self.stats = format!(
-                    "{} clues, {}x{}, {:.0} ms, {} attempt(s), {} node(s)",
-                    result.stats.clue_count,
-                    self.settings.size,
-                    self.settings.size,
-                    result.stats.elapsed.as_secs_f64() * 1000.0,
-                    result.stats.attempts,
-                    result.stats.nodes
-                );
+                self.stats = Some(GenSummary {
+                    clues: result.stats.clue_count,
+                    w: self.settings.size,
+                    h: self.settings.size,
+                    ms: result.stats.elapsed.as_secs_f64() * 1000.0,
+                    attempts: result.stats.attempts,
+                    nodes: result.stats.nodes,
+                });
                 self.refresh_derived();
                 self.refresh_status();
             }
@@ -168,11 +196,15 @@ impl Engine {
                 self.puzzle = None;
                 self.cells.clear();
                 self.wrong.clear();
-                self.stats.clear();
-                self.status = format!(
-                    "generation failed (seed {seed}); try a smaller board or a bigger budget"
+                self.stats = None;
+                self.set_status(
+                    Kind::Bad,
+                    "generation_failed",
+                    &[seed as i64],
+                    format!(
+                        "generation failed (seed {seed}); try a smaller board or a bigger budget"
+                    ),
                 );
-                self.kind = Kind::Bad;
             }
         }
     }
@@ -302,7 +334,8 @@ impl Engine {
     }
 
     /// Middle click on a clue: deduce only what that single clue forces now.
-    fn clue_step_at(&mut self, x: i64, y: i64) {        if self.show_solution {
+    fn clue_step_at(&mut self, x: i64, y: i64) {
+        if self.show_solution {
             return;
         }
         let Some(cell) = self.cell_index(x, y) else {
@@ -312,8 +345,12 @@ impl Engine {
             return;
         };
         let Some(clue) = puzzle.clue_at(cell) else {
-            self.status = "Middle-click a clue cell to step just that clue.".to_string();
-            self.kind = Kind::Info;
+            self.set_status(
+                Kind::Info,
+                "clue_only",
+                &[],
+                "Middle-click a clue cell to step just that clue.".to_string(),
+            );
             return;
         };
         let step = clue_step(&puzzle.grid, &self.cells, cell, clue);
@@ -321,18 +358,30 @@ impl Engine {
         let (x0, y0) = puzzle.grid.xy(cell);
 
         if !satisfiable {
-            self.status = format!("Clue ({x0},{y0}) can no longer be satisfied.");
-            self.kind = Kind::Bad;
+            self.set_status(
+                Kind::Bad,
+                "clue_unsatisfiable",
+                &[x0 as i64, y0 as i64],
+                format!("Clue ({x0},{y0}) can no longer be satisfied."),
+            );
             return;
         }
         if step.is_empty() {
-            self.status = format!("Clue ({x0},{y0}) forces nothing new.");
-            self.kind = Kind::Info;
+            self.set_status(
+                Kind::Info,
+                "clue_forces_nothing",
+                &[x0 as i64, y0 as i64],
+                format!("Clue ({x0},{y0}) forces nothing new."),
+            );
             return;
         }
         let applied = self.apply_marks(step);
-        self.status = format!("Clue ({x0},{y0}): filled {applied} cell(s).");
-        self.kind = Kind::Good;
+        self.set_status(
+            Kind::Good,
+            "clue_filled",
+            &[x0 as i64, y0 as i64, applied as i64],
+            format!("Clue ({x0},{y0}): filled {applied} cell(s)."),
+        );
     }
 
     /// Fill in everything the clues alone force, given the current marks.
@@ -347,27 +396,35 @@ impl Engine {
             clue_deductions(&puzzle.grid, &self.cells, &puzzle.clues)
         };
         if deduced.is_empty() {
-            self.status = "One step: the clues force nothing new right now.".to_string();
-            self.kind = Kind::Info;
+            self.set_status(
+                Kind::Info,
+                "one_step_none",
+                &[],
+                "One step: the clues force nothing new right now.".to_string(),
+            );
             return;
         }
         let applied = self.apply_marks(deduced);
-        self.status = format!(
-            "One step: filled {applied} cell{} the clues force.",
-            if applied == 1 { "" } else { "s" }
+        self.set_status(
+            Kind::Good,
+            "one_step_filled",
+            &[applied as i64],
+            format!(
+                "One step: filled {applied} cell{} the clues force.",
+                if applied == 1 { "" } else { "s" }
+            ),
         );
-        self.kind = Kind::Good;
     }
 
     fn toggle_solution(&mut self) {
         if self.puzzle.is_some() {
             self.show_solution = !self.show_solution;
-            self.status = if self.show_solution {
-                "Showing the solution (S to hide)".to_string()
+            let (key, english) = if self.show_solution {
+                ("solution_shown", "Showing the solution (S to hide)")
             } else {
-                "Solution hidden".to_string()
+                ("solution_hidden", "Solution hidden")
             };
-            self.kind = Kind::Info;
+            self.set_status(Kind::Info, key, &[], english.to_string());
         }
     }
 
@@ -376,8 +433,12 @@ impl Engine {
             return;
         }
         let Some((cell, previous)) = self.history.pop_back() else {
-            self.status = "Nothing to undo.".to_string();
-            self.kind = Kind::Info;
+            self.set_status(
+                Kind::Info,
+                "nothing_to_undo",
+                &[],
+                "Nothing to undo.".to_string(),
+            );
             return;
         };
         self.cells[cell] = previous;
@@ -421,12 +482,16 @@ impl Engine {
             }
         }
         self.wrong = wrong;
-        self.status = if count == 0 {
-            "No mistakes so far.".to_string()
+        if count == 0 {
+            self.set_status(Kind::Good, "check_ok", &[], "No mistakes so far.".to_string());
         } else {
-            format!("{count} wrong cell(s) marked in red")
-        };
-        self.kind = if count == 0 { Kind::Good } else { Kind::Bad };
+            self.set_status(
+                Kind::Bad,
+                "check_wrong",
+                &[count as i64],
+                format!("{count} wrong cell(s) marked in red"),
+            );
+        }
     }
 
     fn after_change(&mut self, focus: Option<usize>) {
@@ -463,19 +528,31 @@ impl Engine {
         };
         if empty > 0 {
             self.solved = false;
-            self.status = format!("{empty} cell{} left", if empty == 1 { "" } else { "s" });
-            self.kind = Kind::Info;
+            self.set_status(
+                Kind::Info,
+                "cells_left",
+                &[empty as i64],
+                format!("{empty} cell{} left", if empty == 1 { "" } else { "s" }),
+            );
         } else if errors.is_empty() {
             self.solved = true;
-            self.status = "Solved! Press N for a new puzzle.".to_string();
-            self.kind = Kind::Good;
+            self.set_status(
+                Kind::Good,
+                "solved",
+                &[],
+                "Solved! Press N for a new puzzle.".to_string(),
+            );
         } else {
             self.solved = false;
-            self.status = format!(
-                "Filled, but {} rule violation(s) - press C to see them",
-                errors.len()
+            self.set_status(
+                Kind::Bad,
+                "filled_with_errors",
+                &[errors.len() as i64],
+                format!(
+                    "Filled, but {} rule violation(s) - press C to see them",
+                    errors.len()
+                ),
             );
-            self.kind = Kind::Bad;
         }
     }
 
@@ -488,18 +565,24 @@ impl Engine {
         };
         let started = Timer::start();
         self.output = report::bench(count, &self.settings, seed);
-        self.status = format!(
-            "Bench: {count} puzzle(s) in {:.2} s",
-            started.elapsed_ms() / 1000.0
+        let seconds = started.elapsed_ms() / 1000.0;
+        self.set_status(
+            Kind::Good,
+            "bench_done",
+            &[count as i64, (seconds * 100.0).round() as i64],
+            format!("Bench: {count} puzzle(s) in {seconds:.2} s"),
         );
-        self.kind = Kind::Good;
     }
 
     fn print_puzzles(&mut self, count: usize) {
         let seed = if self.seed == 0 { 1 } else { self.seed };
         self.output = report::print_puzzles(count, &self.settings, seed);
-        self.status = format!("Printed {count} puzzle(s) below");
-        self.kind = Kind::Good;
+        self.set_status(
+            Kind::Good,
+            "print_done",
+            &[count as i64],
+            format!("Printed {count} puzzle(s) below"),
+        );
     }
 
     fn command(&mut self, cmd: &str) -> Result<(), String> {
@@ -589,12 +672,28 @@ impl Engine {
         escape_into(&mut out, error);
         out.push_str("\",\"status\":\"");
         escape_into(&mut out, &self.status);
-        out.push_str("\",\"settingsError\":\"");
+        out.push_str("\",\"statusKey\":\"");
+        out.push_str(self.status_key);
+        out.push_str("\",\"statusArgs\":[");
+        for (i, arg) in self.status_args.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&arg.to_string());
+        }
+        out.push(']');
+        out.push_str(",\"settingsError\":\"");
         escape_into(&mut out, &self.settings_error);
-        out.push_str("\",\"stats\":\"");
-        escape_into(&mut out, &self.stats);
+        out.push_str("\",\"genStats\":");
+        match &self.stats {
+            None => out.push_str("null"),
+            Some(stats) => out.push_str(&format!(
+                "{{\"clues\":{},\"w\":{},\"h\":{},\"ms\":{:.0},\"attempts\":{},\"nodes\":{}}}",
+                stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes
+            )),
+        }
         out.push_str(&format!(
-            "\",\"w\":{w},\"h\":{h},\"kind\":{},\"seed\":{},\"solved\":{},\"showSolution\":{},\"generating\":{},\"canUndo\":{},\"anchor\":{},\"clueCount\":{}",
+            ",\"w\":{w},\"h\":{h},\"kind\":{},\"seed\":{},\"solved\":{},\"showSolution\":{},\"generating\":{},\"canUndo\":{},\"anchor\":{},\"clueCount\":{}",
             self.kind as u8,
             self.seed,
             self.solved,
