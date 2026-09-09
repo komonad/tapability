@@ -105,8 +105,8 @@ impl GenConfig {
             w,
             h,
             max_attempts: 200,
-            black_lo: 0.40,
-            black_hi: 0.50,
+            black_lo: 0.50,
+            black_hi: 0.60,
             deadline: None,
             node_budget: 150_000,
             time_budget: Duration::from_millis(2_000),
@@ -403,11 +403,20 @@ fn random_solution(rng: &mut Rng, grid: &Grid, target: usize) -> Option<Vec<u8>>
     let mut distance = vec![u32::MAX; n];
     let mut queue: Vec<usize> = Vec::with_capacity(n);
 
+    // Boards of 4x4 and up must reach every edge, so the shape cannot end up as
+    // a blob floating in the middle of a white margin. The extra cells this
+    // needs are bounded by the growth cap below.
+    let require_edges = grid.w >= 4 && grid.h >= 4;
+    let cap = target + (n / 8).max(4);
+
     let start = rng.below(n);
     cells[start] = BLACK;
     blacks.push(start);
 
-    while blacks.len() < target {
+    while blacks.len() < target || (require_edges && !touches_every_edge(&cells, grid)) {
+        if blacks.len() >= cap {
+            return None;
+        }
         // distance from the black region to every white cell
         for d in distance.iter_mut() {
             *d = u32::MAX;
@@ -430,13 +439,28 @@ fn random_solution(rng: &mut Rng, grid: &Grid, target: usize) -> Option<Vec<u8>>
             }
         }
 
-        // the white cell that is furthest away decides where to grow next
+        // A white cell on an edge the tree has not reached wins over the plain
+        // "furthest away" goal, so growth is pulled into every border.
         let mut goal = None;
         let mut best_distance = 0u32;
-        for i in 0..n {
-            if cells[i] == WHITE && distance[i] != u32::MAX && distance[i] > best_distance {
-                best_distance = distance[i];
-                goal = Some(i);
+        if require_edges {
+            for i in 0..n {
+                if cells[i] != WHITE || !on_untouched_edge(grid, &cells, i) {
+                    continue;
+                }
+                if distance[i] != u32::MAX && distance[i] > best_distance {
+                    best_distance = distance[i];
+                    goal = Some(i);
+                }
+            }
+        }
+        // otherwise the white cell that is furthest away decides
+        if goal.is_none() {
+            for i in 0..n {
+                if cells[i] == WHITE && distance[i] != u32::MAX && distance[i] > best_distance {
+                    best_distance = distance[i];
+                    goal = Some(i);
+                }
             }
         }
         let Some(goal) = goal else { break };
@@ -464,7 +488,30 @@ fn random_solution(rng: &mut Rng, grid: &Grid, target: usize) -> Option<Vec<u8>>
     if blacks.len() * 4 < target * 3 || blacks.len() < 6 {
         return None;
     }
+    if require_edges && !touches_every_edge(&cells, grid) {
+        return None;
+    }
     Some(cells)
+}
+
+/// Does the black region reach all four borders?
+fn touches_every_edge(cells: &[u8], grid: &Grid) -> bool {
+    (0..grid.w).any(|x| cells[grid.idx(x, 0)] == BLACK)
+        && (0..grid.w).any(|x| cells[grid.idx(x, grid.h - 1)] == BLACK)
+        && (0..grid.h).any(|y| cells[grid.idx(0, y)] == BLACK)
+        && (0..grid.h).any(|y| cells[grid.idx(grid.w - 1, y)] == BLACK)
+}
+
+/// Is `i` on a border that still has no black cell?
+fn on_untouched_edge(grid: &Grid, cells: &[u8], i: usize) -> bool {
+    let (x, y) = grid.xy(i);
+    let on_top = y == 0 && !(0..grid.w).any(|xx| cells[grid.idx(xx, 0)] == BLACK);
+    let on_bottom =
+        y + 1 == grid.h && !(0..grid.w).any(|xx| cells[grid.idx(xx, grid.h - 1)] == BLACK);
+    let on_left = x == 0 && !(0..grid.h).any(|yy| cells[grid.idx(0, yy)] == BLACK);
+    let on_right =
+        x + 1 == grid.w && !(0..grid.h).any(|yy| cells[grid.idx(grid.w - 1, yy)] == BLACK);
+    on_top || on_bottom || on_left || on_right
 }
 
 /// Chebyshev distance between two cells.
@@ -508,6 +555,16 @@ mod tests {
         for (_, clue) in puzzle.clues.iter() {
             assert_ne!(clue.as_slice(), [8u8], "clue 8 must not appear");
             assert!(clue_is_showable(clue));
+        }
+
+        // the black region reaches every edge instead of floating in a margin
+        if w >= 4 && h >= 4 {
+            let grid = &puzzle.grid;
+            let black_at = |x: usize, y: usize| puzzle.solution[grid.idx(x, y)] == BLACK;
+            assert!((0..w).any(|x| black_at(x, 0)), "top edge has no wall");
+            assert!((0..w).any(|x| black_at(x, h - 1)), "bottom edge has no wall");
+            assert!((0..h).any(|y| black_at(0, y)), "left edge has no wall");
+            assert!((0..h).any(|y| black_at(w - 1, y)), "right edge has no wall");
         }
 
         if !strict_minimal {

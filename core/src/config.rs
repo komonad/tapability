@@ -37,8 +37,11 @@ impl Default for Settings {
         Settings {
             size: 20,
             seed: None,
-            density_lo: 0.40,
-            density_hi: 0.50,
+            // Denser boards are both prettier (less empty space) and much faster
+            // to prove unique: at 0.50-0.60 a 20x20 generates in tens of
+            // milliseconds instead of a second.
+            density_lo: 0.50,
+            density_hi: 0.60,
             max_clueless_fraction: 0.15,
             node_budget: 150_000,
             time_budget_ms: 2_000,
@@ -343,7 +346,7 @@ pub const EXAMPLE: &str = "\
 # In the game: press F2 to open the settings panel; changes are remembered.
 
 size = 20
-density = 0.40-0.50
+density = 0.50-0.60
 max_clueless_fraction = 0.15
 node_budget = 150000
 time_budget_ms = 2000
@@ -427,6 +430,6 @@ mod tests {
             s.set(key.trim(), value.trim()).unwrap();
         }
         assert_eq!(s.size, 20);
-        assert_eq!(s.density_lo, 0.40);
+        assert_eq!(s.density_lo, 0.50);
     }
 }

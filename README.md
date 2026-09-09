@@ -117,7 +117,7 @@ without typing. The browser build has the same slider next to the size field.
 |---|---|---|
 | `size` | 20 | board is `size x size` (3..60) |
 | `seed` | clock | fixed seed; makes generation reproducible |
-| `density` | `0.40-0.50` | fraction of black cells, picked randomly in this range |
+| `density` | `0.50-0.60` | fraction of black cells, picked randomly in this range |
 | `max_clueless_fraction` | 0.15 | reject shapes whose biggest clue-free patch exceeds this fraction of the board |
 | `node_budget` | 150000 | nodes for one whole generation, shared adaptively |
 | `time_budget_ms` | 2000 | milliseconds for one whole generation |
@@ -280,9 +280,11 @@ solution *found and proven* (not "aborted by budget") means unique.
    acyclic connected set. That single rule gives every structural constraint
    Tapa needs for free: a 2x2 block, a black cell surrounded by black cells and
    a white cell ringed by black cells (a clue of 8) all contain a cycle.
-   Growth is aimed at the white area currently furthest from the tree, so the
-   tree reaches into every corner instead of leaving one big empty patch. Black
-   density is 40-50%, which keeps the leftover white patches small.
+   Growth is aimed at the white area currently furthest from the tree, and while
+   any border is still untouched it is aimed at that border instead, so the
+   black region always reaches all four edges rather than floating in a white
+   margin. Black density is 50-60%, which keeps the leftover white patches
+   small.
 2. **take the maximal clue set**: every white cell that touches black becomes a
    clue, except cells whose clue would be 8. If this set does not already have a
    unique solution, the shape is unusable (subsets are only weaker) and a new
@@ -314,22 +316,24 @@ Windows, `--release`, 20x20, 20 seeds:
 
 | metric | result |
 |---|---|
-| generation time | 120-3500 ms, ~1000 ms average, 0 failures |
-| search nodes per uniqueness proof | 35-22000, adaptive pool |
-| clues per puzzle | 69-83 (inclusion-minimal) |
-| black cells | 165-199 of 400 (41-50%) |
-| biggest clue-free patch | 8-39 cells (2-10% of the board) |
-| clue-free rows / columns | 0-1 of 20 |
-| test suite | 54 tests, ~1.2 s release |
+| generation time | 40-780 ms, ~135 ms average, 0 failures |
+| clues per puzzle | 68-79 (inclusion-minimal) |
+| black cells | 201-236 of 400 (50-59%) |
+| biggest clue-free patch | up to 24 cells (6% of the board) |
+| edges reached | 4 of 4 on every puzzle (40 seeds) |
+| shapes tried per puzzle | 1 |
+| test suite | 54 tests, ~0.2 s release |
 
-The same engine in WebAssembly (`web/tapa.wasm`, 144 KiB, Chrome 152): 20x20,
-5 seeds, 813 ms average, 0 failures - within noise of the native build. The page
-itself stays interactive throughout, because all of it runs on a worker thread.
+The same engine in WebAssembly (`web/tapa.wasm`, 144 KiB, Chrome 152) generates
+a 20x20 in the same ballpark; the page itself stays interactive throughout,
+because all of it runs on a worker thread.
 
 The clue count is high because the numbers have to cover the whole board *and*
 the set has to stay minimal. Dense boards are also what make the solver fast:
-the harder a puzzle is constrained, the quicker a uniqueness proof finishes, so
-the tail latency went down as the density went up.
+the harder a puzzle is constrained, the quicker a uniqueness proof finishes. At
+the 0.40-0.50 density this generator used to ship, a 20x20 averaged a second and
+occasionally took three; at 0.50-0.60 the same board averages 135 ms, so the
+denser default is both prettier and faster.
 
 ## Limitations
 
