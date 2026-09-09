@@ -1,0 +1,65 @@
+name: Deploy the web build to GitHub Pages
+
+# The browser build is plain static files plus one WebAssembly module, so Pages
+# can host it directly. This workflow rebuilds the module from source (so the
+# deployed wasm always matches the engine), checks the parts that compile off
+# Windows, and publishes web/ as the site.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deployments race; the newest push wins.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust with the wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Test the engine (the Win32 crate is not built here)
+        run: cargo test --locked -p tapa-core -p tapa-wasm
+
+      - name: Build the WebAssembly engine
+        run: >
+          cargo build --locked -p tapa-wasm
+          --profile wasm-release
+          --target wasm32-unknown-unknown
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp -r web/. _site/
+          cp target/wasm32-unknown-unknown/wasm-release/tapa_wasm.wasm _site/tapa.wasm
+          ls -la _site
+
+      - name: Check the engine through its ABI
+        run: node tools/wasm-smoke.cjs _site/tapa.wasm
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,17 +1,19 @@
 // A tiny static file server for the web front end, with no dependencies.
 //
-//   node tools/serve.cjs [port]
+//   node tools/serve.cjs [port] [root]
 //
 // WebAssembly has to be fetched over HTTP(S): opening index.html as a file://
 // URL will not load web/tapa.wasm in any current browser. This serves the
 // web/ directory with the MIME types the streaming instantiation path wants.
+// Point `root` at a directory to test a different layout, e.g. the subdirectory
+// GitHub Pages serves project sites from.
 
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const root = path.join(__dirname, "..", "web");
 const port = Number(process.argv[2] || 8080);
+const root = path.resolve(process.argv[3] || path.join(__dirname, "..", "web"));
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -25,7 +27,10 @@ const types = {
 
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || "127.0.0.1"}`);
-  const relative = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+  let relative = decodeURIComponent(url.pathname);
+  if (relative.endsWith("/")) {
+    relative += "index.html";
+  }
   const file = path.join(root, path.normalize(relative).replace(/^([/\\])+/, ""));
 
   if (!file.startsWith(root)) {

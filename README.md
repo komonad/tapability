@@ -192,6 +192,30 @@ settings survive a reload, and confirms the page still answers in milliseconds
 while the worker is benching. It writes `web-check.png` so the layout can be
 inspected by eye.
 
+## Deploying the web build
+
+`web/` is a static site: `index.html`, `style.css`, `app.js`, `worker.js` and
+the compiled `tapa.wasm`. Any static host will do. For GitHub Pages,
+`.github/workflows/pages.yml` rebuilds the module from source, runs the tests
+that do not need Windows, checks the ABI, and publishes `web/`:
+
+1. push `main` (the workflow runs on every push and can also be started by hand),
+2. **Settings -> Pages -> Build and deployment -> Source: GitHub Actions**,
+3. open `https://<user>.github.io/<repo>/`.
+
+Every path in the page is relative, so it works from a project subpath as well
+as from a domain root. Pages serves `.wasm` as `application/wasm`, and the
+loader falls back to `WebAssembly.instantiate` on a plain byte array if a host
+gets the type wrong.
+
+GitHub Pages on a **private** repository needs GitHub Pro; on a free account the
+repository has to be public. Serving it locally needs neither:
+
+```
+node tools/serve.cjs                 # http://127.0.0.1:8080/
+node tools/serve.cjs 8081 some/dir   # serve another directory on another port
+```
+
 ## Code map
 
 | file | contents |
