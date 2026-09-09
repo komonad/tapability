@@ -63,6 +63,7 @@ const buttonIds = [
   "btn-check",
   "btn-solution",
   "btn-onestep",
+  "btn-cluestep",
   "btn-undo",
   "btn-apply",
   "btn-defaults",
@@ -84,6 +85,9 @@ const ui = {
   cell: 20,
   dpr: 1,
   hover: -1,
+  // last clue cell the cursor was over, so the Step one clue button still has a
+  // target after the pointer moved onto the button itself
+  lastClue: -1,
   shift: false,
   // set when Shift-hover ends, so the spotlight goes away like it does in the
   // native game instead of falling back to the last painted wall
@@ -185,6 +189,7 @@ function updateChrome(state) {
     "btn-check",
     "btn-solution",
     "btn-onestep",
+    "btn-cluestep",
     "btn-print",
     "btn-bench",
   ]) {
@@ -540,9 +545,9 @@ els.canvas.addEventListener("pointerdown", (event) => {
   const x = cell % ui.cols;
   const y = Math.floor(cell / ui.cols);
 
-  if (event.button === 1) {
-    // middle click: step only the clue under the cursor
-    fire(`cluestep ${x} ${y}`);
+  // middle click, or Alt + click for trackpads without a middle button
+  if (event.button === 1 || (event.button === 0 && event.altKey)) {
+    stepClue(cell);
     return;
   }
   if (event.button !== 0 && event.button !== 2) return;
@@ -572,6 +577,9 @@ els.canvas.addEventListener("pointermove", (event) => {
   }
   if (cell !== ui.hover) {
     ui.hover = cell;
+    if (cell >= 0 && ui.clues.has(cell)) {
+      ui.lastClue = cell;
+    }
     render();
   }
 });
@@ -601,6 +609,23 @@ els.canvas.addEventListener("auxclick", (event) => {
 els.canvas.addEventListener("mousedown", (event) => {
   if (event.button === 1) event.preventDefault();
 });
+
+/* ---- clue stepping ----------------------------------------------------- */
+
+/** Deduce what a single clue forces, exactly like a middle click does. */
+function stepClue(cell) {
+  const index = typeof cell === "number" && cell >= 0 ? cell : ui.lastClue;
+  if (index < 0) {
+    setStatus("Hover a clue cell first, then step it.", "bad");
+    return;
+  }
+  if (ui.clues.has(index)) {
+    ui.lastClue = index;
+  }
+  const x = index % ui.cols;
+  const y = Math.floor(index / ui.cols);
+  fire(`cluestep ${x} ${y}`);
+}
 
 /* ---- keyboard ---------------------------------------------------------- */
 
@@ -834,6 +859,7 @@ els["btn-clear"].addEventListener("click", () => run("reset"));
 els["btn-check"].addEventListener("click", () => run("check"));
 els["btn-solution"].addEventListener("click", () => run("solution"));
 els["btn-onestep"].addEventListener("click", () => run("onestep"));
+els["btn-cluestep"].addEventListener("click", () => stepClue(ui.hover));
 els["btn-undo"].addEventListener("click", () => run("undo"));
 els["btn-apply"].addEventListener("click", applySettings);
 els["btn-defaults"].addEventListener("click", useDefaults);

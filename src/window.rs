@@ -751,8 +751,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
         }
         WM_LBUTTONDOWN => {
             let (x, y) = mouse_pos(lparam);
-            app.begin_drag(x, y, true);
-            SetCapture(hwnd);
+            // Alt + click steps a single clue, for mice without a middle button
+            if GetAsyncKeyState(VK_MENU) < 0 {
+                app.clue_step_at(x, y);
+                let status = app.status.clone();
+                settings_ui::set_message(app, &status);
+            } else {
+                app.begin_drag(x, y, true);
+                SetCapture(hwnd);
+            }
             app.invalidate_grid(hwnd);
             0
         }

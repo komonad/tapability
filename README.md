@@ -43,6 +43,7 @@ Fill every cell black or white:
 | Z | undo (hold to repeat; one stroke = one entry per cell) |
 | D | one step: fill in everything the clues alone force |
 | middle click a clue | step just that one clue, without cascading |
+| Alt + left click a clue | the same, for mice and trackpads without a middle button |
 | Shift + hover | spotlight the wall group under the cursor |
 | N | new puzzle |
 | R | clear all marks (also undoable) |
@@ -149,7 +150,6 @@ node tools/serve.cjs         # static server on http://127.0.0.1:8080/
 node tools/wasm-smoke.cjs    # drive the ABI from Node, no browser needed
 node tools/browser-check.cjs # drive the real page in headless Chrome
 ```
-
 `web/` is plain HTML/CSS/JS with no build step and no dependencies. The module
 is loaded by hand rather than through `wasm-bindgen`, which is not available
 offline: `tapa-wasm` exports a scratch buffer for the command text plus a JSON
@@ -168,6 +168,7 @@ Everything the desktop game does is in the browser too:
 | a small square for an explicit empty mark | canvas |
 | N / R / C / S / D / Z keys, hold Z to repeat | window key handlers |
 | middle click a clue to step only that clue | `cluestep` command |
+| Alt + click, or the "Step one clue" button, for the same thing | `stepClue` in `web/app.js` |
 | settings with hover help, remembered between visits | `localStorage`, fields built from the engine's `FIELDS` |
 | no wall count anywhere in the UI | the state the engine reports never contains one |
 | `--print` / `--bench` | Print and Bench buttons, same text as the CLI |
@@ -198,6 +199,7 @@ inspected by eye.
 | `wasm/src/lib.rs` | game state plus the command/JSON bridge, compiled to WebAssembly |
 | `web/index.html`, `web/style.css`, `web/app.js`, `web/worker.js` | the browser front end |
 | `tools/*.cjs` | static server, wasm ABI smoke test, headless-browser check |
+| `tools/native-check.ps1` | desktop GUI check: posts real mouse messages and compares screenshots |
 | `build-web.ps1` | builds and installs `web/tapa.wasm` |
 
 ## How the solver works

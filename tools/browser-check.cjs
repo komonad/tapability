@@ -272,19 +272,54 @@ async function main() {
   const afterUndo = await evaluate(`ui.cells[${from + 3}]`);
   check("Z undoes the last painted cell", afterUndo === 0, String(afterUndo));
 
-  // ---- middle click steps one clue ---------------------------------------
+  // ---- stepping a single clue: middle click, Alt + click, and the button ---
   const clueIndex = await evaluate(`[...ui.clues.keys()][0]`);
   const clueText = await evaluate(`ui.clues.get(${clueIndex})`);
-  const before = await evaluate(`ui.cells.filter((c) => c !== 0).length`);
+  const cluePattern = new RegExp(`Clue \\(\\d+,\\d+\\)`);
+  const clearStatus = () => evaluate(`setStatus("(cleared)", "")`);
+
+  await clearStatus();
   await mouse("mousePressed", clueIndex, "middle");
   await mouse("mouseReleased", clueIndex, "middle");
-  await sleep(200);
-  const clueStatus = await evaluate(`document.getElementById("status").textContent`);
+  await sleep(250);
+  const middleStatus = await evaluate(`document.getElementById("status").textContent`);
   check(
     "middle click steps the clue under the cursor",
-    new RegExp(`Clue \\(\\d+,\\d+\\)`).test(clueStatus),
-    `${clueStatus} (clue ${clueText})`,
+    cluePattern.test(middleStatus),
+    `${middleStatus} (clue ${clueText})`,
   );
+
+  await clearStatus();
+  const alt = { ...point(clueIndex), button: "left", clickCount: 1, modifiers: 1 };
+  await call("Input.dispatchMouseEvent", { type: "mousePressed", ...alt, buttons: 1 });
+  await call("Input.dispatchMouseEvent", { type: "mouseReleased", ...alt, buttons: 0 });
+  await sleep(250);
+  const altStatus = await evaluate(`document.getElementById("status").textContent`);
+  check("Alt + click steps the clue too", cluePattern.test(altStatus), altStatus);
+
+  await clearStatus();
+  await mouse("mouseMoved", clueIndex, "none");
+  await sleep(80);
+  await evaluate(`document.getElementById("btn-cluestep").click()`);
+  await sleep(250);
+  const buttonStatus = await evaluate(`document.getElementById("status").textContent`);
+  check(
+    "the Step one clue button steps the hovered clue",
+    cluePattern.test(buttonStatus),
+    buttonStatus,
+  );
+
+  // a cell that is not a clue must be refused politely
+  const notClueCell = await evaluate(`(() => {
+    for (let i = 0; i < ui.cells.length; i += 1) if (!ui.clues.has(i)) return i;
+    return -1;
+  })()`);
+  await clearStatus();
+  await mouse("mousePressed", notClueCell, "middle");
+  await mouse("mouseReleased", notClueCell, "middle");
+  await sleep(200);
+  const refused = await evaluate(`document.getElementById("status").textContent`);
+  check("stepping a non-clue cell is refused", /Middle-click a clue/.test(refused), refused);
 
   // ---- one step, check, solution -----------------------------------------
   // start from a clean board so every mark on it comes from the deduction
