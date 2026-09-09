@@ -7,12 +7,16 @@
 
 use std::ptr;
 
-use winapi::shared::minwindef::{HINSTANCE, LRESULT, WPARAM};
+use winapi::shared::minwindef::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use winapi::shared::windef::{HBRUSH, HDC, HWND};
+use winapi::um::commctrl::{
+    InitCommonControlsEx, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX, TBM_GETPOS, TBM_SETPAGESIZE,
+    TBM_SETPOS, TBM_SETRANGE, TBM_SETTICFREQ, TBS_HORZ, TBS_NOTICKS, TB_ENDTRACK,
+};
 use winapi::um::wingdi::{GetStockObject, SetBkColor, SetBkMode, WHITE_BRUSH};
 use winapi::um::winuser::*;
 
-use tapa_core::config::{Settings, FIELDS};
+use tapa_core::config::{Settings, FIELDS, MAX_SIZE, MIN_SIZE};
 use crate::render::{HEADER, PANEL_W};
 use crate::window::App;
 
@@ -31,8 +35,17 @@ const BTN_H: i32 = 30;
 const LABEL_W: i32 = 132;
 const EDIT_W: i32 = 150;
 const FIELD_TOP: i32 = HEADER + 150;
-const MESSAGE_TOP: i32 = FIELD_TOP + FIELDS.len() as i32 * ROW_H + 76;
+/// The board-size slider sits directly under the size field.
+const SLIDER_H: i32 = 24;
+const SLIDER_GAP: i32 = SLIDER_H + 6;
+const MESSAGE_TOP: i32 = FIELD_TOP + FIELDS.len() as i32 * ROW_H + SLIDER_GAP + 76;
 const HELP_TOP: i32 = MESSAGE_TOP + 46;
+
+/// Top of settings field `index`; the size slider pushes everything after the
+/// first field down by [`SLIDER_GAP`].
+fn field_top(index: usize) -> i32 {
+    FIELD_TOP + index as i32 * ROW_H + if index >= 1 { SLIDER_GAP } else { 0 }
+}
 
 pub struct Controls {
     pub edits: Vec<HWND>,
@@ -41,6 +54,8 @@ pub struct Controls {
     pub message: HWND,
     /// Line that explains whatever the mouse is hovering.
     pub help: HWND,
+    /// Board size slider, kept in step with the size edit box.
+    pub slider: HWND,
     pub help_default: String,
 }
 
@@ -112,6 +127,45 @@ unsafe fn make_label(
     hwnd
 }
 
+/// The board-size slider: drag it, and the puzzle is rebuilt on release.
+unsafe fn make_slider(
+    app: &App,
+    x: i32,
+    y: i32,
+    w: i32,
+    hinstance: HINSTANCE,
+) -> HWND {
+    // trackbars live in the common controls library
+    let mut icc: INITCOMMONCONTROLSEX = std::mem::zeroed();
+    icc.dwSize = std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32;
+    icc.dwICC = ICC_BAR_CLASSES;
+    InitCommonControlsEx(&icc);
+
+    let hwnd = CreateWindowExW(
+        0,
+        wide("msctls_trackbar32").as_ptr(),
+        wide("").as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | TBS_HORZ | TBS_NOTICKS,
+        x,
+        y,
+        w,
+        SLIDER_H,
+        app.hwnd,
+        ptr::null_mut(),
+        hinstance,
+        ptr::null_mut(),
+    );
+    SendMessageW(
+        hwnd,
+        TBM_SETRANGE,
+        1,
+        winapi::shared::minwindef::MAKELONG(MIN_SIZE as u16, MAX_SIZE as u16) as LPARAM,
+    );
+    SendMessageW(hwnd, TBM_SETPAGESIZE, 0, 4);
+    SendMessageW(hwnd, TBM_SETTICFREQ, 5, 0);
+    hwnd
+}
+
 /// Create the control column. Called once, right after the window exists.
 pub unsafe fn create(app: &mut App) {
     let hinstance = winapi::um::libloaderapi::GetModuleHandleW(ptr::null());
@@ -152,7 +206,7 @@ pub unsafe fn create(app: &mut App) {
     // --- settings fields -------------------------------------------------
     let mut edits = Vec::with_capacity(FIELDS.len());
     for (index, (_, label, _)) in FIELDS.iter().enumerate() {
-        let top = FIELD_TOP + index as i32 * ROW_H;
+        let top = field_top(index);
         let label_hwnd = make_label(app, label, x, top + 3, LABEL_W, hinstance);
         labels.push(label_hwnd);
         let edit = CreateWindowExW(
@@ -172,9 +226,10 @@ pub unsafe fn create(app: &mut App) {
         SendMessageW(edit, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
         edits.push(edit);
     }
+    let slider = make_slider(app, x, FIELD_TOP + ROW_H - 2, PANEL_W, hinstance);
 
     // --- one-step helper and apply row -----------------------------------
-    let button_top = FIELD_TOP + FIELDS.len() as i32 * ROW_H + 10;
+    let button_top = FIELD_TOP + FIELDS.len() as i32 * ROW_H + SLIDER_GAP + 10;
     let step = make_button(
         app,
         ID_ONE_STEP,
@@ -245,6 +300,7 @@ pub unsafe fn create(app: &mut App) {
         labels,
         message,
         help,
+        slider,
         help_default,
     });
     fill_values(app);
@@ -270,10 +326,17 @@ pub unsafe fn hover_help(app: &App, screen_x: i32, screen_y: i32) {
             return;
         }
     }
+    // the slider belongs to the size field
+    if over(controls.slider) {
+        if let Some((_, _, help)) = FIELDS.first() {
+            set_text(controls.help, help);
+            return;
+        }
+    }
     set_text(controls.help, &controls.help_default);
 }
 
-/// Push the current settings into the edit boxes.
+/// Push the current settings into the edit boxes and the size slider.
 pub unsafe fn fill_values(app: &App) {
     let Some(controls) = app.controls.as_ref() else {
         return;
@@ -282,6 +345,26 @@ pub unsafe fn fill_values(app: &App) {
         if let Some(edit) = controls.edits.get(index) {
             set_text(*edit, &app.settings.value_of(key));
         }
+    }
+    SendMessageW(controls.slider, TBM_SETPOS, 1, app.settings.size as LPARAM);
+}
+
+/// A WM_HSCROLL from the board-size slider: while dragging, keep the size box in
+/// step; when the drag ends, apply the new size (which rebuilds and regenerates).
+pub unsafe fn handle_hscroll(app: &mut App, code: i32, lparam: LPARAM) {
+    let (slider, edit) = match app.controls.as_ref() {
+        Some(controls) => (controls.slider, controls.edits.first().copied()),
+        None => return,
+    };
+    if lparam as HWND != slider {
+        return;
+    }
+    let size = SendMessageW(slider, TBM_GETPOS, 0, 0) as i32;
+    if let Some(edit) = edit {
+        set_text(edit, &size.to_string());
+    }
+    if code as WPARAM == TB_ENDTRACK {
+        apply(app);
     }
 }
 
@@ -323,7 +406,7 @@ pub unsafe fn relayout(app: &App) {
         set(*caption, x, y, PANEL_W, 20);
     }
     for (index, _) in FIELDS.iter().enumerate() {
-        let top = FIELD_TOP + index as i32 * ROW_H;
+        let top = field_top(index);
         if let Some(label) = controls.labels.get(1 + index) {
             set(*label, x, top + 3, LABEL_W, 20);
         }
@@ -331,8 +414,9 @@ pub unsafe fn relayout(app: &App) {
             set(*edit, x + LABEL_W + 8, top, EDIT_W, 24);
         }
     }
+    set(controls.slider, x, FIELD_TOP + ROW_H - 2, PANEL_W, SLIDER_H);
 
-    let button_top = FIELD_TOP + FIELDS.len() as i32 * ROW_H + 10;
+    let button_top = FIELD_TOP + FIELDS.len() as i32 * ROW_H + SLIDER_GAP + 10;
     if let Some(apply) = controls.buttons.get(5) {
         set(*apply, x, button_top, half + 30, BTN_H);
     }
@@ -436,6 +520,7 @@ unsafe fn defaults(app: &mut App) {
             set_text(*edit, &defaults.value_of(key));
         }
     }
+    SendMessageW(controls.slider, TBM_SETPOS, 1, defaults.size as LPARAM);
     set_text(controls.message, "defaults filled in - press Apply");
 }
 
@@ -462,6 +547,35 @@ pub unsafe fn refresh_fonts(app: &App) {
         SendMessageW(*edit, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
     }
     SendMessageW(controls.message, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::render::PANEL_MIN_H;
+
+    /// The window is never shorter than `PANEL_MIN_H`, so the whole column -
+    /// including the last line of help text - has to fit inside it.
+    #[test]
+    fn the_control_column_fits_the_window() {
+        assert!(
+            HELP_TOP + 56 + 8 <= PANEL_MIN_H,
+            "help line ends at {} but the window is only {PANEL_MIN_H} tall",
+            HELP_TOP + 56
+        );
+    }
+
+    #[test]
+    fn the_slider_sits_between_the_size_field_and_the_next_one() {
+        let size_row = field_top(0);
+        let slider_top = FIELD_TOP + ROW_H - 2;
+        let density_row = field_top(1);
+        assert!(slider_top >= size_row + 24, "slider overlaps the size field");
+        assert!(
+            slider_top + SLIDER_H <= density_row,
+            "slider overlaps the density field"
+        );
+    }
 }
 
 

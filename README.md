@@ -8,14 +8,18 @@ solution is **provably unique**.
 
 ![a generated board](board.png)
 
-The desktop window is sized from the desktop work area (taskbar excluded) and
-centred, so the whole board and the control column are always visible.
+The desktop window opens at a size taken from the desktop work area (taskbar
+excluded) and centred, and it is resizable: the board takes whatever space is
+left of the control column, so the cells grow and shrink with the window. Text
+below and above the board is clipped to the board column, so it can never run
+under the control column however small the window gets. The window cannot be
+resized below the control column plus a 3x3 board at 11 pixels per cell.
 
 ```
 cargo run --release                 # play in a Win32 window
 cargo run --release -- --print 1    # print a puzzle + its solution
 cargo run --release -- --bench 20   # time 20 generations
-cargo test --workspace --release    # 43 tests, incl. uniqueness + minimality
+cargo test --workspace --release    # 50 tests, incl. uniqueness + minimality
 
 pwsh -File build-web.ps1            # build web/tapa.wasm, then check the ABI
 node tools/serve.cjs                # then open http://127.0.0.1:8080/
@@ -44,6 +48,8 @@ Fill every cell black or white:
 | D | one step: fill in everything the clues alone force |
 | middle click a clue | step just that one clue, without cascading |
 | Alt + left click a clue | the same, for mice and trackpads without a middle button |
+| drag the size slider | pick a board size; the puzzle is rebuilt when you release it |
+| resize the window | the grid rescales to fill the space left of the control column |
 | Shift + hover | spotlight the wall group under the cursor |
 | N | new puzzle |
 | R | clear all marks (also undoable) |
@@ -96,8 +102,13 @@ bottom of the column.
 
 The buttons and the keyboard shortcuts do the same thing. Changing a setting
 and pressing **Apply & new puzzle** validates it with the same code the config
-file uses, saves it, and starts a new puzzle; changing the board size rebuilds
-the layout and resizes the window. **Defaults** refills the fields.
+file uses, saves it, and starts a new puzzle; changing the board size re-fits
+the grid in the current window (and grows the window if the new board would not
+fit). **Defaults** refills the fields.
+
+The board size has a **slider** under its field: dragging it updates the number
+live and rebuilds the puzzle when you let go, so you can sweep through sizes
+without typing. The browser build has the same slider next to the size field.
 
 | setting | default | meaning |
 |---|---|---|
@@ -169,6 +180,7 @@ Everything the desktop game does is in the browser too:
 | N / R / C / S / D / Z keys, hold Z to repeat | window key handlers |
 | middle click a clue to step only that clue | `cluestep` command |
 | Alt + click, or the "Step one clue" button, for the same thing | `stepClue` in `web/app.js` |
+| size slider, window resize rescales the canvas | `layout()` in `web/app.js` |
 | settings with hover help, remembered between visits | `localStorage`, fields built from the engine's `FIELDS` |
 | no wall count anywhere in the UI | the state the engine reports never contains one |
 | `--print` / `--bench` | Print and Bench buttons, same text as the CLI |
@@ -276,7 +288,7 @@ Windows, `--release`, 20x20, 20 seeds:
 | black cells | 165-199 of 400 (41-50%) |
 | biggest clue-free patch | 8-39 cells (2-10% of the board) |
 | clue-free rows / columns | 0-1 of 20 |
-| test suite | 43 tests, ~1 s release |
+| test suite | 50 tests, ~0.7 s release |
 
 The same engine in WebAssembly (`web/tapa.wasm`, 144 KiB, Chrome 152): 20x20,
 5 seeds, 813 ms average, 0 failures - within noise of the native build. The page

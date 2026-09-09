@@ -19,9 +19,27 @@ pub const PANEL_W: i32 = 320;
 /// Space between the board and the control column.
 pub const PANEL_GAP: i32 = 18;
 pub const HEADER: i32 = 62;
-pub const FOOTER: i32 = 80;
-const MAX_CELL: i32 = 38;
+/// Room for the two hint lines (they wrap on narrow windows) plus the info line.
+pub const FOOTER: i32 = 118;
+/// Cell size the window opens with, and the largest a resized window may use.
+const INITIAL_MAX_CELL: i32 = 38;
+const MAX_CELL: i32 = 96;
 const MIN_CELL: i32 = 11;
+/// Height the control column needs, so the window is never shorter than it.
+/// `settings_ui` has a test that keeps its layout inside this.
+pub const PANEL_MIN_H: i32 = 680;
+
+/// Smallest client width that still fits the control column and a board of
+/// `cols` cells at [`MIN_CELL`].
+pub fn min_client_w(cols: usize) -> i32 {
+    2 * MARGIN + MIN_CELL * cols as i32 + PANEL_GAP + PANEL_W
+}
+
+/// Smallest client height: the control column, or the shortest board that still
+/// leaves room for the header and the footer.
+pub fn min_client_h(rows: usize) -> i32 {
+    PANEL_MIN_H.max(HEADER + MIN_CELL * rows as i32 + FOOTER)
+}
 
 #[inline]
 fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
@@ -97,9 +115,9 @@ unsafe fn make_font(height: i32, weight: i32) -> HFONT {
     )
 }
 
-/// Cell size and client size that fit comfortably inside the usable desktop
-/// area (i.e. excluding the taskbar), for a `cols x rows` board.
-pub unsafe fn compute_layout(cols: usize, rows: usize) -> (i32, i32, i32) {
+/// Client size the window opens with: a `cols x rows` board that fits
+/// comfortably inside the usable desktop area (i.e. excluding the taskbar).
+pub unsafe fn initial_client_size(cols: usize, rows: usize) -> (i32, i32) {
     let mut work: RECT = mem::zeroed();
     let have_work = SystemParametersInfoW(
         SPI_GETWORKAREA,
@@ -120,10 +138,21 @@ pub unsafe fn compute_layout(cols: usize, rows: usize) -> (i32, i32, i32) {
 
     let cell = (avail_h / rows as i32)
         .min(avail_w / cols as i32)
-        .clamp(MIN_CELL, MAX_CELL);
+        .clamp(MIN_CELL, INITIAL_MAX_CELL);
     let client_w = 2 * MARGIN + cell * cols as i32 + PANEL_GAP + PANEL_W;
     let client_h = HEADER + cell * rows as i32 + FOOTER;
-    (cell, client_w, client_h)
+    (client_w.max(min_client_w(cols)), client_h.max(min_client_h(rows)))
+}
+
+/// Cell size that fits a `cols x rows` board into a client area: the largest
+/// size that still leaves the control column its width on the right.
+pub fn fit_cell(cols: usize, rows: usize, client_w: i32, client_h: i32) -> i32 {
+    let panel_x = client_w.max(min_client_w(cols)) - MARGIN - PANEL_W;
+    let avail_w = (panel_x - PANEL_GAP - MARGIN).max(MIN_CELL * cols as i32);
+    let avail_h = (client_h.max(min_client_h(rows)) - HEADER - FOOTER).max(MIN_CELL * rows as i32);
+    (avail_w / cols as i32)
+        .min(avail_h / rows as i32)
+        .clamp(MIN_CELL, MAX_CELL)
 }
 
 /// Top-left corner that centres a `w x h` window inside the work area.
@@ -139,21 +168,12 @@ pub unsafe fn centered_origin(w: i32, h: i32) -> (i32, i32) {
 
 impl Gfx {
     pub unsafe fn new(cols: usize, rows: usize) -> Gfx {
-        let (cell, client_w, client_h) = compute_layout(cols, rows);
+        let (client_w, client_h) = initial_client_size(cols, rows);
 
-        let grid_w = cell * cols as i32;
-        let f = |scale: f64| ((cell as f64 * scale).round() as i32).max(9);
-        let font_clue = [
-            make_font(f(0.66), 600),
-            make_font(f(0.46), 600),
-            make_font(f(0.36), 600),
-            make_font(f(0.30), 600),
-        ];
-
-        Gfx {
-            cell,
+        let mut gfx = Gfx {
+            cell: 0,
             grid_x: MARGIN,
-            panel_x: MARGIN + grid_w + PANEL_GAP,
+            panel_x: 0,
             grid_y: HEADER,
             client_w,
             client_h,
@@ -177,8 +197,57 @@ impl Gfx {
             font_title: make_font(22, 700),
             font_ui: make_font(15, 400),
             font_small: make_font(13, 400),
-            font_clue,
+            font_clue: [ptr::null_mut(); 4],
+        };
+        gfx.fit(client_w, client_h);
+        gfx.rebuild_clue_fonts();
+        gfx
+    }
+
+    /// Recompute the board geometry for a client size. The control column is
+    /// pinned to the right edge, the board takes whatever is left. Returns true
+    /// when the cell size changed, i.e. when the clue fonts are stale.
+    pub unsafe fn fit(&mut self, client_w: i32, client_h: i32) -> bool {
+        let client_w = client_w.max(min_client_w(self.cols));
+        let client_h = client_h.max(min_client_h(self.rows));
+        self.client_w = client_w;
+        self.client_h = client_h;
+        self.panel_x = client_w - MARGIN - PANEL_W;
+
+        let cell = fit_cell(self.cols, self.rows, client_w, client_h);
+        if cell == self.cell {
+            return false;
         }
+        self.cell = cell;
+        true
+    }
+
+    /// Change the board dimensions; call [`Gfx::fit`] afterwards.
+    pub fn set_grid(&mut self, cols: usize, rows: usize) {
+        self.cols = cols;
+        self.rows = rows;
+    }
+
+    /// Clue digits scale with the cell size, so they are rebuilt on resize.
+    pub unsafe fn rebuild_clue_fonts(&mut self) {
+        for font in self.font_clue.iter() {
+            if !font.is_null() {
+                DeleteObject(*font as HGDIOBJ);
+            }
+        }
+        let f = |scale: f64| ((self.cell as f64 * scale).round() as i32).max(9);
+        self.font_clue = [
+            make_font(f(0.66), 600),
+            make_font(f(0.46), 600),
+            make_font(f(0.36), 600),
+            make_font(f(0.30), 600),
+        ];
+    }
+
+    /// Right edge of the board area, where text stops so it can never run into
+    /// the control column.
+    pub fn text_right(&self) -> i32 {
+        self.panel_x - PANEL_GAP
     }
 
     /// Fonts for the settings panel controls.
@@ -222,7 +291,9 @@ impl Gfx {
             self.font_clue[2],
             self.font_clue[3],
         ] {
-            DeleteObject(f as HGDIOBJ);
+            if !f.is_null() {
+                DeleteObject(f as HGDIOBJ);
+            }
         }
     }
 }
@@ -278,13 +349,16 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
     );
 
     // ---- header -----------------------------------------------------------
+    // Text never crosses into the control column: it stops at the board's right
+    // edge, which is also where the grid ends.
+    let text_right = g.text_right();
     text(
         hdc,
         g.font_title,
         C_TEXT,
         &format!("Tapa {}x{}", app.size, app.size),
-        rect(MARGIN, 10, w - 2 * MARGIN, 38),
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+        rect(MARGIN, 10, text_right, 38),
+        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
     );
     let (status_color, status_text) = match app.status_kind {
         StatusKind::Good => (C_GOOD, app.status.clone()),
@@ -296,14 +370,17 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
         g.font_ui,
         status_color,
         &status_text,
-        rect(MARGIN, 12, w - MARGIN, 40),
-        DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
+        rect(MARGIN, 12, text_right, 40),
+        DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
     );
 
     // ---- board ------------------------------------------------------------
     if let Some(puzzle) = &app.puzzle {
         let n = puzzle.grid.len();
         if app.cells.len() == n {
+            // nothing may bleed out of the board area, whatever the window size
+            let saved = SaveDC(hdc);
+            IntersectClipRect(hdc, 0, HEADER - 2, g.panel_x - 2, h);
             for y in 0..g.rows {
                 for x in 0..g.cols {
                     let idx = puzzle.grid.idx(x, y);
@@ -432,6 +509,7 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
                 g.grid_y + g.rows as i32 * g.cell + 2,
             );
             stroke(hdc, &border, if app.solved { g.pen_win } else { g.pen_border });
+            RestoreDC(hdc, saved);
         }
     } else {
         text(
@@ -439,12 +517,14 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
             g.font_ui,
             C_DIM,
             "Generating a puzzle with a unique solution...",
-            rect(MARGIN, HEADER + 40, w - MARGIN, HEADER + 80),
-            DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+            rect(MARGIN, HEADER + 40, text_right, HEADER + 80),
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
         );
     }
 
     // ---- footer -----------------------------------------------------------
+    // The two hints wrap inside the board column, so a narrow window keeps them
+    // out of the control column instead of running underneath it.
     let top = g.grid_y + g.rows as i32 * g.cell + 12;
     let line_h = 21;
     text(
@@ -452,16 +532,16 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
         g.font_small,
         C_DIM,
         "Left click: wall   Right click: empty   click the same mark again: clear   drag: paint a stroke",
-        rect(MARGIN, top, w - MARGIN, top + line_h),
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+        rect(MARGIN, top, text_right, top + 2 * line_h),
+        DT_LEFT | DT_WORDBREAK | DT_EDITCONTROL,
     );
     text(
         hdc,
         g.font_small,
         C_DIM,
         "Shift + hover: spotlight a wall group   middle click or Alt+click a clue: step just it   Z: undo   Esc: quit",
-        rect(MARGIN, top + line_h, w - MARGIN, top + 2 * line_h),
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+        rect(MARGIN, top + 2 * line_h, text_right, top + 4 * line_h),
+        DT_LEFT | DT_WORDBREAK | DT_EDITCONTROL,
     );
     if let Some(puzzle) = &app.puzzle {
         let broken = if app.errors.any() {
@@ -480,8 +560,8 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
             g.font_small,
             C_DIM,
             &info,
-            rect(MARGIN, top + 2 * line_h, w - MARGIN, top + 3 * line_h),
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            rect(MARGIN, top + 4 * line_h, text_right, top + 5 * line_h),
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
         );
     }
 }
@@ -555,6 +635,57 @@ unsafe fn draw_clue(hdc: HDC, g: &Gfx, clue: &[u8], r: RECT, color: COLORREF) {
             cell,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_window_shows_38_pixel_cells() {
+        // the client size the window opens with for a 20x20 board
+        let (w, h) = (2 * MARGIN + 38 * 20 + PANEL_GAP + PANEL_W, HEADER + 38 * 20 + FOOTER);
+        assert_eq!(fit_cell(20, 20, w, h), 38);
+    }
+
+    #[test]
+    fn a_bigger_window_gets_bigger_cells() {
+        let small = fit_cell(20, 20, 1146, 940);
+        let big = fit_cell(20, 20, 2000, 1400);
+        assert!(big > small, "{big} should be bigger than {small}");
+    }
+
+    #[test]
+    fn cells_never_shrink_below_the_minimum_or_grow_past_the_maximum() {
+        assert_eq!(fit_cell(60, 60, 400, 400), MIN_CELL);
+        assert_eq!(fit_cell(3, 3, 4000, 3000), MAX_CELL);
+    }
+
+    #[test]
+    fn the_board_always_fits_beside_the_control_column() {
+        for size in [3usize, 8, 20, 40, 60] {
+            for (w, h) in [(419, 680), (800, 700), (1146, 940), (2000, 1400), (900, 1600)] {
+                let cell = fit_cell(size, size, w, h);
+                let panel_x = w.max(min_client_w(size)) - MARGIN - PANEL_W;
+                assert!(
+                    cell * size as i32 <= panel_x - PANEL_GAP - MARGIN,
+                    "{size}x{size} in {w}x{h}: cells of {cell} do not fit"
+                );
+                assert!(
+                    HEADER + cell * size as i32 + FOOTER <= h.max(min_client_h(size)),
+                    "{size}x{size} in {w}x{h}: the board does not fit vertically"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_minimum_window_fits_the_column_and_a_three_cell_board() {
+        assert_eq!(min_client_w(3), 2 * MARGIN + 3 * MIN_CELL + PANEL_GAP + PANEL_W);
+        assert_eq!(min_client_h(3), PANEL_MIN_H);
+        assert_eq!(min_client_h(60), HEADER + 60 * MIN_CELL + FOOTER);
+        assert!(min_client_h(60) > PANEL_MIN_H);
     }
 }
 

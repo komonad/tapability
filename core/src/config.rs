@@ -65,6 +65,11 @@ fn number(value: &str, key: &str) -> Result<f64, ConfigError> {
         .map_err(|_| ConfigError(format!("{key}: '{value}' is not a number")))
 }
 
+/// Smallest board the game allows.
+pub const MIN_SIZE: usize = 3;
+/// Largest board the game allows.
+pub const MAX_SIZE: usize = 60;
+
 /// The settings shown in the control column: key, label, hover help.
 pub const FIELDS: &[(&str, &str, &str)] = &[
     (
@@ -121,8 +126,10 @@ impl Settings {
         match key {
             "size" => {
                 let n = number(value, key)? as usize;
-                if !(3..=60).contains(&n) {
-                    return Err(ConfigError(format!("size: {n} is outside 3..60")));
+                if !(MIN_SIZE..=MAX_SIZE).contains(&n) {
+                    return Err(ConfigError(format!(
+                        "size: {n} is outside {MIN_SIZE}..{MAX_SIZE}"
+                    )));
                 }
                 self.size = n;
             }

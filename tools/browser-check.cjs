@@ -405,6 +405,29 @@ async function main() {
   check("a new board size is applied", resized.cols === 12 && resized.rows === 12, JSON.stringify(resized));
   check("the heading follows the size", resized.heading === "Tapa 12x12", resized.heading);
   check("settings are remembered in localStorage", /size = 12/.test(resized.saved || ""), resized.saved);
+  check(
+    "the size slider follows the applied size",
+    await evaluate(`document.getElementById("f-size-slider").value === "12"`),
+  );
+
+  // ---- the size slider rebuilds the board ---------------------------------
+  await evaluate(`(() => {
+    const slider = document.getElementById("f-size-slider");
+    slider.value = "16";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitFor(`!ui.busy && ui.cols === 16`, "the size slider rebuilds the board", 90000);
+  const sliderState = await evaluate(`({
+    cols: ui.cols,
+    field: document.getElementById("f-size").value,
+    slider: document.getElementById("f-size-slider").value,
+    heading: document.getElementById("title").textContent,
+  })`);
+  check("the size slider rebuilds the board", sliderState.cols === 16, JSON.stringify(sliderState));
+  check("the slider writes into the size field", sliderState.field === "16", sliderState.field);
+  check("the slider keeps its own value", sliderState.slider === "16", sliderState.slider);
+  check("the heading follows the slider", sliderState.heading === "Tapa 16x16", sliderState.heading);
 
   // ---- print and bench run in wasm and show their output ------------------
   await evaluate(`document.getElementById("btn-bench").click()`);

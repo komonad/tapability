@@ -21,6 +21,16 @@ use crate::settings_ui;
 
 const WM_PUZZLE_READY: UINT = WM_APP + 1;
 
+/// Window style used both when the window is created and when its minimum
+/// tracking size is computed. The frame is thick so the board can be resized.
+const WINDOW_STYLE: u32 = WS_OVERLAPPED
+    | WS_CAPTION
+    | WS_SYSMENU
+    | WS_MINIMIZEBOX
+    | WS_MAXIMIZEBOX
+    | WS_THICKFRAME
+    | WS_CLIPCHILDREN;
+
 /// How many marks can be undone. Holding Z walks back through them.
 const MAX_HISTORY: usize = 4096;
 
@@ -601,35 +611,57 @@ impl App {
         }
     }
 
+    /// Re-fit the board to the current client area. Called on WM_SIZE, so the
+    /// grid grows and shrinks with the window.
+    pub fn on_resize(&mut self) {
+        unsafe {
+            let mut rc: RECT = mem::zeroed();
+            GetClientRect(self.hwnd, &mut rc);
+            if rc.right <= 0 || rc.bottom <= 0 {
+                return;
+            }
+            if self.gfx.fit(rc.right, rc.bottom) {
+                self.gfx.rebuild_clue_fonts();
+            }
+            settings_ui::relayout(self);
+            InvalidateRect(self.hwnd, ptr::null(), 0);
+        }
+    }
+
     /// Rebuild the board layout for the current settings and start over.
     /// Called after the settings panel applied a new configuration.
     pub fn apply_settings(&mut self, size_changed: bool) {
         unsafe {
             if size_changed {
                 let size = self.settings.size;
-                self.gfx.destroy();
-                self.gfx = Gfx::new(size, size);
                 self.size = size;
+                self.gfx.set_grid(size, size);
 
-                let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-                let mut rc = RECT {
-                    left: 0,
-                    top: 0,
-                    right: self.gfx.client_w,
-                    bottom: self.gfx.client_h,
-                };
-                AdjustWindowRectEx(&mut rc, style, 0, 0);
-                let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
-                let (x, y) = render::centered_origin(w, h);
-                SetWindowPos(
-                    self.hwnd,
-                    ptr::null_mut(),
-                    x,
-                    y,
-                    w,
-                    h,
-                    SWP_NOZORDER | SWP_NOACTIVATE,
-                );
+                // keep the window, but grow it if the new board cannot fit at the
+                // smallest cell size
+                let mut rc: RECT = mem::zeroed();
+                GetClientRect(self.hwnd, &mut rc);
+                let want_w = render::min_client_w(size).max(rc.right);
+                let want_h = render::min_client_h(size).max(rc.bottom);
+                if want_w > rc.right || want_h > rc.bottom {
+                    let mut frame = RECT {
+                        left: 0,
+                        top: 0,
+                        right: want_w,
+                        bottom: want_h,
+                    };
+                    AdjustWindowRectEx(&mut frame, WINDOW_STYLE, 0, 0);
+                    SetWindowPos(
+                        self.hwnd,
+                        ptr::null_mut(),
+                        0,
+                        0,
+                        frame.right - frame.left,
+                        frame.bottom - frame.top,
+                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+                self.on_resize();
                 settings_ui::refresh_fonts(self);
                 settings_ui::relayout(self);
             }
@@ -706,12 +738,36 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
             InvalidateRect(hwnd, ptr::null(), 0);
             0
         }
+        WM_HSCROLL => {
+            settings_ui::handle_hscroll(app, (wparam & 0xFFFF) as i32, lparam);
+            InvalidateRect(hwnd, ptr::null(), 0);
+            0
+        }
         WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT => {
             settings_ui::color_control(wparam as HDC)
         }
         WM_ERASEBKGND => 1,
         WM_PAINT => {
             render::paint(app, hwnd);
+            0
+        }
+        WM_SIZE => {
+            app.on_resize();
+            0
+        }
+        WM_GETMINMAXINFO => {
+            // never let the window shrink below the control column plus a board
+            // at the smallest cell size
+            let info = &mut *(lparam as *mut MINMAXINFO);
+            let mut rc = RECT {
+                left: 0,
+                top: 0,
+                right: render::min_client_w(app.size),
+                bottom: render::min_client_h(app.size),
+            };
+            AdjustWindowRectEx(&mut rc, WINDOW_STYLE, 0, 0);
+            info.ptMinTrackSize.x = rc.right - rc.left;
+            info.ptMinTrackSize.y = rc.bottom - rc.top;
             0
         }
         WM_MOUSEMOVE => {
@@ -825,14 +881,13 @@ pub fn run(seed: u64, settings: &Settings, settings_path: std::path::PathBuf) ->
             return Err(format!("RegisterClassW failed ({})", GetLastError()));
         }
 
-        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
         let mut rc = RECT {
             left: 0,
             top: 0,
             right: gfx.client_w,
             bottom: gfx.client_h,
         };
-        AdjustWindowRectEx(&mut rc, style, 0, 0);
+        AdjustWindowRectEx(&mut rc, WINDOW_STYLE, 0, 0);
         let (win_w, win_h) = (rc.right - rc.left, rc.bottom - rc.top);
         // centre the window in the work area so it can never land off-screen
         let (win_x, win_y) = render::centered_origin(win_w, win_h);
@@ -842,7 +897,7 @@ pub fn run(seed: u64, settings: &Settings, settings_path: std::path::PathBuf) ->
             0,
             class_name.as_ptr(),
             title.as_ptr(),
-            style,
+            WINDOW_STYLE,
             win_x,
             win_y,
             win_w,

@@ -215,6 +215,8 @@ function setBusy(busy) {
   for (const id of buttonIds) {
     els[id].disabled = busy;
   }
+  const slider = document.getElementById("f-size-slider");
+  if (slider) slider.disabled = busy;
   if (ui.state) {
     updateChrome(ui.state);
   }
@@ -715,6 +717,29 @@ function buildFields(fields) {
     input.autocomplete = "off";
 
     row.append(label, input);
+
+    // the board size also gets a slider, under its field
+    if (field.key === "size") {
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.id = "f-size-slider";
+      slider.min = "3";
+      slider.max = "60";
+      slider.step = "1";
+      slider.value = field.value;
+      slider.title = field.help;
+      slider.setAttribute("aria-label", "Board size");
+      // dragging only updates the number; releasing rebuilds the puzzle
+      slider.addEventListener("input", () => {
+        input.value = slider.value;
+      });
+      slider.addEventListener("change", () => {
+        input.value = slider.value;
+        applySettings();
+      });
+      row.append(slider);
+    }
+
     row.addEventListener("mouseenter", () => showHelp(field, row));
     row.addEventListener("mouseleave", () => showHelp(null, null));
     input.addEventListener("focus", () => showHelp(field, row));
@@ -743,7 +768,13 @@ function fillFromText(text) {
     values.set(clean.slice(0, cut).trim(), clean.slice(cut + 1).trim());
   }
   for (const input of els.fields.querySelectorAll("input")) {
-    input.value = values.has(input.dataset.key) ? values.get(input.dataset.key) : "";
+    if (input.type === "range") continue;
+    const value = values.has(input.dataset.key) ? values.get(input.dataset.key) : "";
+    input.value = value;
+    if (input.dataset.key === "size" && /^\d+$/.test(value)) {
+      const slider = document.getElementById("f-size-slider");
+      if (slider) slider.value = value;
+    }
   }
 }
 
@@ -778,6 +809,7 @@ async function applySettings() {
   let state = null;
   let seedText = "";
   for (const input of els.fields.querySelectorAll("input")) {
+    if (input.type === "range") continue;
     state = await send(`set ${input.dataset.key} ${input.value.trim()}`);
     if (input.dataset.key === "seed") seedText = input.value.trim();
     if (state.settingsError) {
@@ -789,6 +821,9 @@ async function applySettings() {
   }
   if (state) {
     saveSettings(state.settingsText);
+    // the engine may have normalised the values, and the size slider has to
+    // follow whatever size was applied
+    fillFromText(state.settingsText);
   }
   const seed = /^\d+$/.test(seedText) ? Number(seedText) : newSeed();
   await generate(seed);
