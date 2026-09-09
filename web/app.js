@@ -49,6 +49,9 @@ const STORAGE_KEY = "tapa.settings";
 const LANG_KEY = "tapa.lang";
 /** Simplified Chinese is the default, whatever the browser asks for. */
 const DEFAULT_LANG = "zh-CN";
+/** Stamped with the commit sha when the site is published. */
+const APP_VERSION = "__VERSION__";
+window.TAPA_APP_VERSION = APP_VERSION;
 
 /* ---- translations ------------------------------------------------------ */
 
@@ -715,11 +718,14 @@ els.canvas.addEventListener("pointermove", (event) => {
 });
 
 function endStroke(event) {
+  // a touch screen has no hover, and a lingering outline would cut through a
+  // wall group, so the marker is dropped as soon as the finger lifts
+  const touch = Boolean(event && event.pointerType === "touch");
   if (ui.tap) {
     // a tap that never travelled: cycle the mark (or step a clue)
     const cell = ui.tap.cell;
     ui.tap = null;
-    ui.hover = cell;
+    ui.hover = touch ? -1 : cell;
     fire(`tap ${cell % ui.cols} ${Math.floor(cell / ui.cols)}`);
     render();
     return;
@@ -728,7 +734,7 @@ function endStroke(event) {
   ui.painting = false;
   fire("paint end");
   if (event) {
-    ui.hover = cellAt(event);
+    ui.hover = touch ? -1 : cellAt(event);
     render();
   }
 }
@@ -1061,6 +1067,25 @@ async function batch(kind) {
 
 /* ---- language ---------------------------------------------------------- */
 
+/** The text each translatable element carries in the HTML, before any script
+ *  runs. Used as the last resort so a translation can never blank an element. */
+const inlineText = new Map();
+
+function rememberInlineText() {
+  for (const element of document.querySelectorAll("[data-i18n]")) {
+    if (!inlineText.has(element)) {
+      inlineText.set(element, element.textContent.trim());
+    }
+  }
+}
+
+function textFor(element) {
+  const key = element.dataset.i18n;
+  const translated = i18n.dict[key];
+  if (typeof translated === "string" && translated.length > 0) return translated;
+  return inlineText.get(element) || key;
+}
+
 function readLang() {
   try {
     const saved = window.localStorage.getItem(LANG_KEY);
@@ -1102,8 +1127,18 @@ function setLanguage(lang, persist = true) {
     els.lang.value = lang;
   }
 
-  for (const element of document.querySelectorAll("[data-i18n]")) {
-    element.textContent = t(element.dataset.i18n);
+  rememberInlineText();
+  applyLanguageToDom();
+  els.help.textContent = t("help.default");
+  if (ui.state) {
+    updateChrome(ui.state);
+  }
+  render();
+}
+
+function applyLanguageToDom() {
+  for (const [element] of inlineText) {
+    element.textContent = textFor(element);
   }
   for (const row of els.fields.children) {
     const key = row.dataset.field;
@@ -1121,11 +1156,28 @@ function setLanguage(lang, persist = true) {
       if (field && input) input.title = fieldHelp(field);
     }
   }
-  els.help.textContent = t("help.default");
-  if (ui.state) {
-    updateChrome(ui.state);
+}
+
+/** Repair any element that ended up with no text at all. Cheap, and it means a
+ *  half-cached page cannot leave the control column blank. Returns how many
+ *  elements had to be fixed. */
+function ensureTranslated() {
+  let repaired = 0;
+  for (const element of document.querySelectorAll("[data-i18n]")) {
+    if (element.textContent.trim().length === 0) {
+      element.textContent = textFor(element);
+      repaired += 1;
+    }
   }
-  render();
+  for (const row of els.fields.children) {
+    const label = row.querySelector("label");
+    if (label && label.textContent.trim().length === 0) {
+      const field = (ui.fields || []).find((f) => f.key === row.dataset.field);
+      label.textContent = field ? fieldLabel(field) : row.dataset.field || "";
+      repaired += 1;
+    }
+  }
+  return repaired;
 }
 
 /* ---- wiring ------------------------------------------------------------ */
@@ -1144,6 +1196,7 @@ els["btn-bench"].addEventListener("click", () => batch("bench"));
 els.outputClose.addEventListener("click", hideOutput);
 
 async function start() {
+  rememberInlineText();
   setLanguage(readLang(), false);
   buildLangSelect();
   setStatus(t("status.generating"), "");
@@ -1165,6 +1218,23 @@ async function start() {
   const seedInput = document.getElementById("f-seed");
   const seedText = seedInput ? seedInput.value.trim() : "";
   await generate(/^\d+$/.test(seedText) ? Number(seedText) : newSeed());
+
+  // a half-cached page can leave elements without text; repair them without
+  // waiting for the player to touch the language menu
+  ensureTranslated();
+  window.setTimeout(ensureTranslated, 1500);
+}
+
+// the HTML knows which release it is; if a script came from an older cache the
+// two disagree and the page reloads itself once with a cache-busting query
+if (window.TAPA_VERSION && window.TAPA_VERSION !== "__VERSION__") {
+  window.addEventListener("load", () => {
+    const fresh = /[?&]fresh=1/.test(window.location.search);
+    if (window.TAPA_APP_VERSION !== window.TAPA_VERSION && !fresh) {
+      const separator = window.location.search ? "&" : "?";
+      window.location.replace(`${window.location.pathname}${window.location.search}${separator}fresh=1`);
+    }
+  });
 }
 
 start();

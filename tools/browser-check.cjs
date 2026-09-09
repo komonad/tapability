@@ -214,6 +214,22 @@ async function main() {
     await evaluate(`document.getElementById("intro").textContent.includes("黑格")`),
   );
 
+  // a half-cached page must repair itself instead of waiting for a click
+  const repaired = await evaluate(`(() => {
+    for (const element of document.querySelectorAll("[data-i18n]")) element.textContent = "";
+    for (const label of document.querySelectorAll(".field label")) label.textContent = "";
+    const fixed = ensureTranslated();
+    const stillEmpty = [...document.querySelectorAll("[data-i18n], .field label")].filter(
+      (element) => element.textContent.trim().length === 0,
+    ).length;
+    return { fixed, stillEmpty, button: document.querySelector("#btn-new span").textContent.trim() };
+  })()`);
+  check(
+    "the page repairs missing button text by itself",
+    repaired.stillEmpty === 0 && repaired.button.length > 0,
+    JSON.stringify(repaired),
+  );
+
   // the canvas must actually be painted: look for wall-coloured pixels
   const painted = await evaluate(`(() => {
     const canvas = document.getElementById("board");
@@ -439,6 +455,63 @@ async function main() {
     `[${from}, ${from + 1}, ${from + 2}, ${from + 3}].map((i) => ui.cells[i]).join("")`,
   );
   check("dragging paints every cell it crosses", dragged === "1111", dragged);
+
+  // ---- a block of walls has no grid lines inside --------------------------
+  const blockAt = await evaluate(`(() => {
+    for (let y = 0; y + 2 < ui.rows; y += 1) {
+      for (let x = 0; x + 2 < ui.cols; x += 1) {
+        let ok = true;
+        for (let dy = 0; dy < 3 && ok; dy += 1) {
+          for (let dx = 0; dx < 3 && ok; dx += 1) {
+            if (ui.clues.has((y + dy) * ui.cols + x + dx)) ok = false;
+          }
+        }
+        if (ok) return { x, y };
+      }
+    }
+    return null;
+  })()`);
+  await evaluate(`(async () => {
+    for (let dy = 0; dy < 3; dy += 1) {
+      for (let dx = 0; dx < 3; dx += 1) {
+        const state = await send(\`paint begin \${${blockAt.x} + dx} \${${blockAt.y} + dy} 1\`);
+        applyState(state);
+      }
+    }
+    await send("paint end");
+  })()`);
+  await sleep(300);
+  const blockScan = await evaluate(`(() => {
+    const ctx = document.getElementById("board").getContext("2d");
+    const dpr = ui.dpr, cell = ui.cell;
+    const isGrid = (d) => Math.abs(d[0] - 168) < 22 && Math.abs(d[1] - 174) < 22 && Math.abs(d[2] - 188) < 22;
+    const at = (px, py) => {
+      const d = ctx.getImageData(Math.round(px * dpr), Math.round(py * dpr), 1, 1).data;
+      return [d[0], d[1], d[2]];
+    };
+    const bad = [];
+    for (let dy = 0; dy < 3; dy += 1) {
+      for (let dx = 1; dx < 3; dx += 1) {
+        const px = (${blockAt.x} + dx) * cell, py = (${blockAt.y} + dy + 0.5) * cell;
+        if (isGrid(at(px, py))) bad.push("v" + dx + "," + dy);
+      }
+    }
+    for (let dy = 1; dy < 3; dy += 1) {
+      for (let dx = 0; dx < 3; dx += 1) {
+        const px = (${blockAt.x} + dx + 0.5) * cell, py = (${blockAt.y} + dy) * cell;
+        if (isGrid(at(px, py))) bad.push("h" + dx + "," + dy);
+      }
+    }
+    return bad;
+  })()`);
+  check(
+    "a 3x3 wall block has no grid lines inside",
+    blockScan.length === 0,
+    JSON.stringify(blockScan),
+  );
+  await evaluate(`document.getElementById("btn-clear").click()`);
+  await waitFor(`!ui.busy`, "the block is cleared again");
+  await sleep(100);
 
   // ---- undo takes the stroke back ----------------------------------------
   await key("z");
@@ -748,6 +821,11 @@ async function main() {
     "the third tap clears the cell",
     (await evaluate(`ui.cells[${touchCell}]`)) === 0,
     String(await evaluate(`ui.cells[${touchCell}]`)),
+  );
+  check(
+    "a tap leaves no lingering hover box",
+    (await evaluate(`ui.hover`)) === -1,
+    String(await evaluate(`ui.hover`)),
   );
 
   // a finger that travels is a stroke, not a tap

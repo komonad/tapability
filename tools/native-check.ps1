@@ -291,6 +291,8 @@ $after = Grab-Stable
 $paintDiff = [NativeCheck]::Diff($before, $after)
 Report "a plain left click paints a cell" ($paintDiff -gt 0) "nothing changed"
 Write-Host "       ($paintDiff bytes changed; one cell is about $((4 * $script:cell * $script:cell)))"
+$c0 = (((($freeCells[0][1]) * $script:cell + [math]::Floor($script:cell / 2)) * $gw) + ($freeCells[0][0] * $script:cell + [math]::Floor($script:cell / 2))) * 4
+Write-Host "       (cell $($freeCells[0] -join ',') centre before rgb($($before[$c0 + 2]),$($before[$c0 + 1]),$($before[$c0])) after rgb($($after[$c0 + 2]),$($after[$c0 + 1]),$($after[$c0])))"
 
 # ---- 2. Alt + click steps a clue ------------------------------------------
 $altDiff = 0
@@ -305,34 +307,74 @@ foreach ($c in $clueCells) {
 Report "Alt + click steps the clue under the cursor" ($altDiff -gt 0) "no clue produced a deduction"
 Write-Host "       (clue $altCell changed $altDiff bytes)"
 
-# ---- 2b. two touching walls read as one block -----------------------------
-# find a free pair next to each other, and another pair well away from it
-$pair = $null
-$far = $null
-for ($y = 0; $y -lt $Size; $y++) {
-    for ($x = 0; $x + 1 -lt $Size; $x++) {
-        if ($flags[$y * $Size + $x] -or $flags[$y * $Size + $x + 1]) { continue }
-        if (-not $pair) { $pair = @($x, $y) }
-        elseif (-not $far -and ([math]::Abs($x - $pair[0]) + [math]::Abs($y - $pair[1])) -gt 2) { $far = @($x, $y) }
+# ---- 2b. a block of walls has no grid lines inside ------------------------
+# find a 3x3 clue-free block
+$block = $null
+for ($y = 0; $y + 2 -lt $Size -and -not $block; $y++) {
+    for ($x = 0; $x + 2 -lt $Size -and -not $block; $x++) {
+        $ok = $true
+        for ($dy = 0; $dy -lt 3 -and $ok; $dy++) {
+            for ($dx = 0; $dx -lt 3 -and $ok; $dx++) {
+                if ($flags[($y + $dy) * $Size + $x + $dx]) { $ok = $false }
+            }
+        }
+        if ($ok) { $block = @($x, $y) }
     }
 }
-if ($pair) {
-    Click-Cell $pair[0] $pair[1] $false
-    Click-Cell ($pair[0] + 1) $pair[1] $false
+if ($block) {
+    # start from a clean board: the clue step above may have filled cells here
+    [void][NativeCheck]::PostMessageW($script:hwnd, 0x0100, [IntPtr]0x52, [IntPtr]0)   # R = clear
+    Start-Sleep -Seconds 1
+    for ($dy = 0; $dy -lt 3; $dy++) {
+        for ($dx = 0; $dx -lt 3; $dx++) {
+            Click-Cell ($block[0] + $dx) ($block[1] + $dy) $false
+        }
+    }
     $shot2 = Grab-Stable
     $cellPx = $script:cell
-    # the grid grab starts at the grid origin, so cell coordinates are direct
-    $sharedOffset = ((($pair[1] * $cellPx + [math]::Floor($cellPx / 2)) * $gw) + (($pair[0] + 1) * $cellPx)) * 4
-    $shared = @($shot2[$sharedOffset + 2], $shot2[$sharedOffset + 1], $shot2[$sharedOffset])
-    $isGrid = ([math]::Abs($shared[0] - 168) -lt 20) -and ([math]::Abs($shared[1] - 174) -lt 20) -and ([math]::Abs($shared[2] - 188) -lt 20)
-    Report "no grid line between two touching walls" (-not $isGrid) "edge is rgb($($shared -join ','))"
-
-    if ($far) {
-        $plainOffset = (((($far[1] * $cellPx) + [math]::Floor($cellPx / 2)) * $gw) + (($far[0] + 1) * $cellPx)) * 4
-        $plain = @($shot2[$plainOffset + 2], $shot2[$plainOffset + 1], $shot2[$plainOffset])
-        $isGridPlain = ([math]::Abs($plain[0] - 168) -lt 20) -and ([math]::Abs($plain[1] - 174) -lt 20) -and ([math]::Abs($plain[2] - 188) -lt 20)
-        Report "grid lines are still drawn next to plain cells" $isGridPlain "edge is rgb($($plain -join ','))"
+    $isGridPixel = {
+        param($shot, $px, $py)
+        $o = (($py * $gw) + $px) * 4
+        $b = $shot[$o]; $g = $shot[$o + 1]; $r = $shot[$o + 2]
+        return ([math]::Abs($r - 168) -lt 20) -and ([math]::Abs($g - 174) -lt 20) -and ([math]::Abs($b - 188) -lt 20)
     }
+    $badEdges = 0
+    $sample = ""
+    # the 12 internal edges of the 3x3 block
+    for ($dy = 0; $dy -lt 3; $dy++) {
+        for ($dx = 1; $dx -lt 3; $dx++) {
+            $px = ($block[0] + $dx) * $cellPx
+            $py = ($block[1] + $dy) * $cellPx + [math]::Floor($cellPx / 2)
+            if (& $isGridPixel $shot2 $px $py) { $badEdges++; if (-not $sample) { $sample = "v$dx,$dy" } }
+        }
+    }
+    for ($dy = 1; $dy -lt 3; $dy++) {
+        for ($dx = 0; $dx -lt 3; $dx++) {
+            $px = ($block[0] + $dx) * $cellPx + [math]::Floor($cellPx / 2)
+            $py = ($block[1] + $dy) * $cellPx
+            if (& $isGridPixel $shot2 $px $py) { $badEdges++; if (-not $sample) { $sample = "h$dx,$dy" } }
+        }
+    }
+    Report "a 3x3 wall block has no grid lines inside" ($badEdges -eq 0) "$badEdges of 12 internal edges still show a grid line ($sample)"
+    $centres = ""
+    for ($dy = 0; $dy -lt 3; $dy++) {
+        for ($dx = 0; $dx -lt 3; $dx++) {
+            $o = ((($block[1] + $dy) * $cellPx + [math]::Floor($cellPx / 2)) * $gw + (($block[0] + $dx) * $cellPx + [math]::Floor($cellPx / 2))) * 4
+            $centres += "$($shot2[$o + 2]),$($shot2[$o + 1]),$($shot2[$o])  "
+        }
+        $centres += "| "
+    }
+    Write-Host "       (block cell centres: $centres)"
+
+    # an edge between a wall and a plain cell must keep its line
+    $plainEdge = $false
+    if ($block[0] + 3 -lt $Size) {
+        $px = ($block[0] + 3) * $cellPx
+        $py = $block[1] * $cellPx + [math]::Floor($cellPx / 2)
+        $plainEdge = & $isGridPixel $shot2 $px $py
+    }
+    if ($plainEdge) { Report "grid lines are still drawn next to plain cells" $true "" }
+
     # put the board back for the checks that follow
     [void][NativeCheck]::PostMessageW($script:hwnd, 0x0100, [IntPtr]0x52, [IntPtr]0)   # R = clear
     Start-Sleep -Seconds 1

@@ -209,8 +209,6 @@ button {
 /* the button label and its key hint sit next to each other */
 button span {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 button:hover:not(:disabled) {

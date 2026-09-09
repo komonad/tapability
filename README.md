@@ -189,7 +189,10 @@ into the asset URLs (`?v=...` on the stylesheet, both scripts and the wasm): a
 freshly fetched page always asks for matching scripts instead of reusing ones
 the browser cached from an earlier deploy. And every translatable element
 carries its Chinese text inline in the HTML, so a page whose scripts are stale
-or blocked still reads correctly instead of showing empty buttons.
+or blocked still reads correctly instead of showing empty buttons. If a script
+does end up older than the page, the two version stamps disagree and the page
+reloads itself once with a cache-busting query; a repair pass then fills any
+element that somehow ended up without text.
 
 Everything the desktop game does is in the browser too, including a touch
 build: a finger that taps a cell cycles it wall -> empty -> unmarked, a finger
