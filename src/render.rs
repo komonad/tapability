@@ -23,8 +23,9 @@ pub const HEADER: i32 = 62;
 pub const FOOTER: i32 = 118;
 /// Cell size the window opens with, and the largest a resized window may use.
 const INITIAL_MAX_CELL: i32 = 38;
-const MAX_CELL: i32 = 96;
-const MIN_CELL: i32 = 11;
+/// Smallest and largest cell the zoom slider allows.
+pub const MIN_CELL: i32 = 11;
+pub const MAX_CELL: i32 = 96;
 /// Height the control column needs, so the window is never shorter than it.
 /// `settings_ui` has a test that keeps its layout inside this.
 pub const PANEL_MIN_H: i32 = 680;

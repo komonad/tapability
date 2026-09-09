@@ -611,6 +611,54 @@ impl App {
         }
     }
 
+    /// Zoom the board to `cell` pixels per cell by resizing the window to fit.
+    /// Called when the cell-size slider is released.
+    pub fn set_cell_size(&mut self, cell: i32) {
+        unsafe {
+            let cell = cell.clamp(render::MIN_CELL, render::MAX_CELL);
+            let cols = self.gfx.cols as i32;
+            let rows = self.gfx.rows as i32;
+            let want_w = (2 * render::MARGIN + cell * cols + render::PANEL_GAP + render::PANEL_W)
+                .max(render::min_client_w(self.gfx.cols));
+            let want_h = (render::HEADER + cell * rows + render::FOOTER)
+                .max(render::min_client_h(self.gfx.rows));
+
+            // never grow past the work area; the layout will re-fit if it must
+            let mut work: RECT = mem::zeroed();
+            let have_work = SystemParametersInfoW(
+                SPI_GETWORKAREA,
+                0,
+                &mut work as *mut RECT as *mut winapi::ctypes::c_void,
+                0,
+            ) != 0;
+            let (max_w, max_h) = if have_work {
+                (work.right - work.left, work.bottom - work.top)
+            } else {
+                (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+            };
+
+            let mut frame = RECT {
+                left: 0,
+                top: 0,
+                right: want_w,
+                bottom: want_h,
+            };
+            AdjustWindowRectEx(&mut frame, WINDOW_STYLE, 0, 0);
+            let w = (frame.right - frame.left).min(max_w);
+            let h = (frame.bottom - frame.top).min(max_h);
+            SetWindowPos(
+                self.hwnd,
+                ptr::null_mut(),
+                0,
+                0,
+                w,
+                h,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            self.on_resize();
+        }
+    }
+
     /// Re-fit the board to the current client area. Called on WM_SIZE, so the
     /// grid grows and shrinks with the window.
     pub fn on_resize(&mut self) {
@@ -623,6 +671,7 @@ impl App {
             if self.gfx.fit(rc.right, rc.bottom) {
                 self.gfx.rebuild_clue_fonts();
             }
+            settings_ui::sync_slider(self);
             settings_ui::relayout(self);
             InvalidateRect(self.hwnd, ptr::null(), 0);
         }

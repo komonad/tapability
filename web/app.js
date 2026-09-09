@@ -36,8 +36,14 @@ const C = {
 };
 
 const MIN_CELL = 11;
-const MAX_CELL = 38;
+const MAX_CELL = 96;
+const MIN_SIZE = 3;
+const MAX_SIZE = 60;
 const STORAGE_KEY = "tapa.settings";
+
+const ZOOM_HELP =
+  "How many pixels one board cell is drawn at. It changes the size of the picture, " +
+  "not the number of cells. Fit draws the board as large as the window allows.";
 
 /* ---- elements ---------------------------------------------------------- */
 
@@ -84,6 +90,8 @@ const ui = {
   rows: 0,
   cell: 20,
   dpr: 1,
+  // null means "as large as fits the window"; the slider pins an explicit size
+  zoom: null,
   hover: -1,
   // last clue cell the cursor was over, so the Step one clue button still has a
   // target after the pointer moved onto the button itself
@@ -215,8 +223,10 @@ function setBusy(busy) {
   for (const id of buttonIds) {
     els[id].disabled = busy;
   }
-  const slider = document.getElementById("f-size-slider");
+  const slider = document.getElementById("zoom-slider");
   if (slider) slider.disabled = busy;
+  const fit = document.getElementById("btn-fit");
+  if (fit) fit.disabled = busy;
   if (ui.state) {
     updateChrome(ui.state);
   }
@@ -262,10 +272,14 @@ function layout() {
   const rows = ui.rows || 20;
   const availW = Math.max(220, els.stage.clientWidth || window.innerWidth - 380);
   const availH = Math.max(240, window.innerHeight - 230);
-  const cell = Math.max(
+  const fitted = Math.max(
     MIN_CELL,
     Math.min(MAX_CELL, Math.floor(Math.min(availW / cols, availH / rows))),
   );
+  const cell =
+    ui.zoom === null
+      ? fitted
+      : Math.max(MIN_CELL, Math.min(MAX_CELL, Math.round(ui.zoom)));
   ui.cell = cell;
   ui.dpr = window.devicePixelRatio || 1;
 
@@ -275,6 +289,11 @@ function layout() {
   els.canvas.style.height = `${height}px`;
   els.canvas.width = Math.round(width * ui.dpr);
   els.canvas.height = Math.round(height * ui.dpr);
+
+  const slider = document.getElementById("zoom-slider");
+  if (slider && document.activeElement !== slider) {
+    slider.value = String(cell);
+  }
   render();
 }
 
@@ -717,35 +736,55 @@ function buildFields(fields) {
     input.autocomplete = "off";
 
     row.append(label, input);
-
-    // the board size also gets a slider, under its field
-    if (field.key === "size") {
-      const slider = document.createElement("input");
-      slider.type = "range";
-      slider.id = "f-size-slider";
-      slider.min = "3";
-      slider.max = "60";
-      slider.step = "1";
-      slider.value = field.value;
-      slider.title = field.help;
-      slider.setAttribute("aria-label", "Board size");
-      // dragging only updates the number; releasing rebuilds the puzzle
-      slider.addEventListener("input", () => {
-        input.value = slider.value;
-      });
-      slider.addEventListener("change", () => {
-        input.value = slider.value;
-        applySettings();
-      });
-      row.append(slider);
-    }
-
     row.addEventListener("mouseenter", () => showHelp(field, row));
     row.addEventListener("mouseleave", () => showHelp(null, null));
     input.addEventListener("focus", () => showHelp(field, row));
     input.addEventListener("blur", () => showHelp(null, null));
     els.fields.append(row);
   }
+  buildZoomRow();
+}
+
+/** The cell-size (zoom) slider: it changes how big the board is drawn, not how
+ *  many cells it has. "Fit" goes back to filling the window. */
+function buildZoomRow() {
+  const row = document.createElement("div");
+  row.className = "field zoom";
+
+  const label = document.createElement("label");
+  label.textContent = "Cell size (px)";
+  label.htmlFor = "zoom-slider";
+
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.id = "zoom-slider";
+  slider.min = String(MIN_CELL);
+  slider.max = String(MAX_CELL);
+  slider.step = "1";
+  slider.value = String(ui.cell);
+  slider.title = ZOOM_HELP;
+
+  const fit = document.createElement("button");
+  fit.type = "button";
+  fit.id = "btn-fit";
+  fit.textContent = "Fit";
+  fit.title = "Draw the board as large as the window allows";
+
+  slider.addEventListener("input", () => {
+    ui.zoom = Number(slider.value);
+    layout();
+  });
+  fit.addEventListener("click", () => {
+    ui.zoom = null;
+    layout();
+  });
+
+  row.append(label, slider, fit);
+  row.addEventListener("mouseenter", () =>
+    showHelp({ label: "Cell size", help: ZOOM_HELP }, row),
+  );
+  row.addEventListener("mouseleave", () => showHelp(null, null));
+  els.fields.append(row);
 }
 
 function showHelp(field, row) {
@@ -771,10 +810,6 @@ function fillFromText(text) {
     if (input.type === "range") continue;
     const value = values.has(input.dataset.key) ? values.get(input.dataset.key) : "";
     input.value = value;
-    if (input.dataset.key === "size" && /^\d+$/.test(value)) {
-      const slider = document.getElementById("f-size-slider");
-      if (slider) slider.value = value;
-    }
   }
 }
 

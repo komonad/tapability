@@ -83,6 +83,8 @@ h1 {
   align-items: flex-start;
   justify-content: flex-start;
   min-height: 0;
+  /* a zoomed-in board can be bigger than the window, so let it scroll */
+  overflow: auto;
 }
 
 canvas {
@@ -242,6 +244,20 @@ kbd {
   background: transparent;
   accent-color: var(--accent);
   cursor: pointer;
+}
+
+/* the zoom row is label | slider | Fit */
+.field.zoom {
+  grid-template-columns: 132px 1fr auto;
+}
+
+.field.zoom input[type="range"] {
+  grid-column: auto;
+}
+
+.field.zoom button {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .field input[type="range"]:disabled {

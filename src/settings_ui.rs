@@ -16,8 +16,8 @@ use winapi::um::commctrl::{
 use winapi::um::wingdi::{GetStockObject, SetBkColor, SetBkMode, WHITE_BRUSH};
 use winapi::um::winuser::*;
 
-use tapa_core::config::{Settings, FIELDS, MAX_SIZE, MIN_SIZE};
-use crate::render::{HEADER, PANEL_W};
+use tapa_core::config::{Settings, FIELDS};
+use crate::render::{HEADER, MAX_CELL, MIN_CELL, PANEL_W};
 use crate::window::App;
 
 pub const ID_APPLY: i32 = 1;
@@ -35,17 +35,25 @@ const BTN_H: i32 = 30;
 const LABEL_W: i32 = 132;
 const EDIT_W: i32 = 150;
 const FIELD_TOP: i32 = HEADER + 150;
-/// The board-size slider sits directly under the size field.
+/// The cell-size slider gets its own row between the size field and the rest.
 const SLIDER_H: i32 = 24;
-const SLIDER_GAP: i32 = SLIDER_H + 6;
-const MESSAGE_TOP: i32 = FIELD_TOP + FIELDS.len() as i32 * ROW_H + SLIDER_GAP + 76;
+/// Rows used by the settings block: one per field plus the slider row.
+const FIELD_ROWS: i32 = FIELDS.len() as i32 + 1;
+const MESSAGE_TOP: i32 = FIELD_TOP + FIELD_ROWS * ROW_H + 76;
 const HELP_TOP: i32 = MESSAGE_TOP + 46;
 
-/// Top of settings field `index`; the size slider pushes everything after the
-/// first field down by [`SLIDER_GAP`].
+/// Top of settings field `index`; the slider row sits right after the first
+/// field (the board size), so every later field moves down by one row.
 fn field_top(index: usize) -> i32 {
-    FIELD_TOP + index as i32 * ROW_H + if index >= 1 { SLIDER_GAP } else { 0 }
+    FIELD_TOP + index as i32 * ROW_H + if index >= 1 { ROW_H } else { 0 }
 }
+
+/// Top of the cell-size slider row.
+fn slider_top() -> i32 {
+    FIELD_TOP + ROW_H
+}
+
+const SLIDER_HELP: &str = "How many pixels one board cell is drawn at. Dragging it resizes the window so the board zooms in or out; resizing the window moves the slider.";
 
 pub struct Controls {
     pub edits: Vec<HWND>,
@@ -54,8 +62,9 @@ pub struct Controls {
     pub message: HWND,
     /// Line that explains whatever the mouse is hovering.
     pub help: HWND,
-    /// Board size slider, kept in step with the size edit box.
+    /// Cell-size (zoom) slider.
     pub slider: HWND,
+    pub slider_label: HWND,
     pub help_default: String,
 }
 
@@ -128,6 +137,7 @@ unsafe fn make_label(
 }
 
 /// The board-size slider: drag it, and the puzzle is rebuilt on release.
+/// The cell-size slider: it zooms the board, so dragging it resizes the window.
 unsafe fn make_slider(
     app: &App,
     x: i32,
@@ -159,10 +169,10 @@ unsafe fn make_slider(
         hwnd,
         TBM_SETRANGE,
         1,
-        winapi::shared::minwindef::MAKELONG(MIN_SIZE as u16, MAX_SIZE as u16) as LPARAM,
+        winapi::shared::minwindef::MAKELONG(MIN_CELL as u16, MAX_CELL as u16) as LPARAM,
     );
-    SendMessageW(hwnd, TBM_SETPAGESIZE, 0, 4);
-    SendMessageW(hwnd, TBM_SETTICFREQ, 5, 0);
+    SendMessageW(hwnd, TBM_SETPAGESIZE, 0, 8);
+    SendMessageW(hwnd, TBM_SETTICFREQ, 10, 0);
     hwnd
 }
 
@@ -226,10 +236,18 @@ pub unsafe fn create(app: &mut App) {
         SendMessageW(edit, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
         edits.push(edit);
     }
-    let slider = make_slider(app, x, FIELD_TOP + ROW_H - 2, PANEL_W, hinstance);
+    // the cell-size slider sits in its own row, right under the board size
+    let slider_label = make_label(app, "Cell size (px)", x, slider_top() + 3, LABEL_W, hinstance);
+    let slider = make_slider(
+        app,
+        x + LABEL_W + 8,
+        slider_top() + 2,
+        PANEL_W - LABEL_W - 8,
+        hinstance,
+    );
 
     // --- one-step helper and apply row -----------------------------------
-    let button_top = FIELD_TOP + FIELDS.len() as i32 * ROW_H + SLIDER_GAP + 10;
+    let button_top = FIELD_TOP + FIELD_ROWS * ROW_H + 10;
     let step = make_button(
         app,
         ID_ONE_STEP,
@@ -301,6 +319,7 @@ pub unsafe fn create(app: &mut App) {
         message,
         help,
         slider,
+        slider_label,
         help_default,
     });
     fill_values(app);
@@ -326,17 +345,14 @@ pub unsafe fn hover_help(app: &App, screen_x: i32, screen_y: i32) {
             return;
         }
     }
-    // the slider belongs to the size field
-    if over(controls.slider) {
-        if let Some((_, _, help)) = FIELDS.first() {
-            set_text(controls.help, help);
-            return;
-        }
+    if over(controls.slider) || over(controls.slider_label) {
+        set_text(controls.help, SLIDER_HELP);
+        return;
     }
     set_text(controls.help, &controls.help_default);
 }
 
-/// Push the current settings into the edit boxes and the size slider.
+/// Push the current settings into the edit boxes and the cell slider.
 pub unsafe fn fill_values(app: &App) {
     let Some(controls) = app.controls.as_ref() else {
         return;
@@ -346,25 +362,33 @@ pub unsafe fn fill_values(app: &App) {
             set_text(*edit, &app.settings.value_of(key));
         }
     }
-    SendMessageW(controls.slider, TBM_SETPOS, 1, app.settings.size as LPARAM);
+    sync_slider(app);
 }
 
-/// A WM_HSCROLL from the board-size slider: while dragging, keep the size box in
-/// step; when the drag ends, apply the new size (which rebuilds and regenerates).
+/// Put the zoom slider where the board actually is, e.g. after the window was
+/// resized by dragging its frame.
+pub unsafe fn sync_slider(app: &App) {
+    if let Some(controls) = app.controls.as_ref() {
+        SendMessageW(controls.slider, TBM_SETPOS, 1, app.gfx.cell as LPARAM);
+    }
+}
+
+/// A WM_HSCROLL from the zoom slider. While dragging, only the help line
+/// updates; on release the window is resized so one cell is that many pixels.
 pub unsafe fn handle_hscroll(app: &mut App, code: i32, lparam: LPARAM) {
-    let (slider, edit) = match app.controls.as_ref() {
-        Some(controls) => (controls.slider, controls.edits.first().copied()),
-        None => return,
+    let Some(controls) = app.controls.as_ref() else {
+        return;
     };
-    if lparam as HWND != slider {
+    if lparam as HWND != controls.slider {
         return;
     }
-    let size = SendMessageW(slider, TBM_GETPOS, 0, 0) as i32;
-    if let Some(edit) = edit {
-        set_text(edit, &size.to_string());
-    }
+    let cell = SendMessageW(controls.slider, TBM_GETPOS, 0, 0) as i32;
+    set_text(
+        controls.help,
+        &format!("Cell size: {cell} px. Release to zoom the board to this size."),
+    );
     if code as WPARAM == TB_ENDTRACK {
-        apply(app);
+        app.set_cell_size(cell);
     }
 }
 
@@ -414,9 +438,16 @@ pub unsafe fn relayout(app: &App) {
             set(*edit, x + LABEL_W + 8, top, EDIT_W, 24);
         }
     }
-    set(controls.slider, x, FIELD_TOP + ROW_H - 2, PANEL_W, SLIDER_H);
+    set(controls.slider_label, x, slider_top() + 3, LABEL_W, 20);
+    set(
+        controls.slider,
+        x + LABEL_W + 8,
+        slider_top() + 2,
+        PANEL_W - LABEL_W - 8,
+        SLIDER_H,
+    );
 
-    let button_top = FIELD_TOP + FIELDS.len() as i32 * ROW_H + SLIDER_GAP + 10;
+    let button_top = FIELD_TOP + FIELD_ROWS * ROW_H + 10;
     if let Some(apply) = controls.buttons.get(5) {
         set(*apply, x, button_top, half + 30, BTN_H);
     }
@@ -520,7 +551,7 @@ unsafe fn defaults(app: &mut App) {
             set_text(*edit, &defaults.value_of(key));
         }
     }
-    SendMessageW(controls.slider, TBM_SETPOS, 1, defaults.size as LPARAM);
+    SendMessageW(controls.slider_label, WM_SETFONT, app.gfx.ui_font() as WPARAM, 1);
     set_text(controls.message, "defaults filled in - press Apply");
 }
 
@@ -540,6 +571,7 @@ pub unsafe fn refresh_fonts(app: &App) {
         .buttons
         .iter()
         .chain(controls.labels.iter())
+        .chain(std::iter::once(&controls.slider_label))
     {
         SendMessageW(*hwnd, WM_SETFONT, app.gfx.ui_font() as WPARAM, 1);
     }
@@ -566,15 +598,21 @@ mod tests {
     }
 
     #[test]
-    fn the_slider_sits_between_the_size_field_and_the_next_one() {
+    fn the_slider_has_its_own_row_between_the_size_and_density_fields() {
         let size_row = field_top(0);
-        let slider_top = FIELD_TOP + ROW_H - 2;
+        let slider = slider_top();
         let density_row = field_top(1);
-        assert!(slider_top >= size_row + 24, "slider overlaps the size field");
+        assert!(slider >= size_row + 24, "the slider overlaps the size field");
         assert!(
-            slider_top + SLIDER_H <= density_row,
-            "slider overlaps the density field"
+            slider + SLIDER_H <= density_row,
+            "the slider overlaps the density field"
         );
+    }
+
+    #[test]
+    fn the_slider_covers_the_cell_sizes_the_layout_allows() {
+        assert_eq!(MIN_CELL, 11);
+        assert!(MAX_CELL > MIN_CELL);
     }
 }
 

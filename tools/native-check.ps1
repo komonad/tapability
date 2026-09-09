@@ -227,6 +227,23 @@ function Grab-Stable {
     return $shot
 }
 
+# Grab the whole client area, with the game raised first (CopyFromScreen reads
+# whatever is on top of the desktop).
+function Grab-Client {
+    [void][NativeCheck]::SetForegroundWindow($script:hwnd)
+    [void][NativeCheck]::BringWindowToTop($script:hwnd)
+    Start-Sleep -Milliseconds 250
+    $r = New-Object NativeCheck+RECT
+    [void][NativeCheck]::GetClientRect($script:hwnd, [ref]$r)
+    $p = New-Object NativeCheck+POINT
+    [void][NativeCheck]::ClientToScreen($script:hwnd, [ref]$p)
+    return @{
+        shot = [NativeCheck]::Grab($p.x, $p.y, $r.right, $r.bottom)
+        w = $r.right
+        h = $r.bottom
+    }
+}
+
 function Click-Cell([int]$cx, [int]$cy, [bool]$alt) {
     # WM_LBUTTONDOWN carries client coordinates, not screen coordinates
     $px = 24 + $cx * $script:cell + [math]::Floor($script:cell / 2)
@@ -317,29 +334,40 @@ $childCb = [NativeCheck+EnumProc]{
 Report "the control column has a size slider" ($script:slider -ne [IntPtr]::Zero) "no trackbar found"
 
 if ($script:slider -ne [IntPtr]::Zero) {
-    $beforeW = $rect.right - $rect.left
-    [void][NativeCheck]::SendMessageW($script:slider, 0x0405, [IntPtr]1, [IntPtr]10)   # TBM_SETPOS
-    [void][NativeCheck]::PostMessageW($script:hwnd, 0x0114, [IntPtr]8, $script:slider) # WM_HSCROLL / TB_ENDTRACK
-    Start-Sleep -Seconds 3
+    $lines0 = 0
+    $cell0 = [NativeCheck]::DetectCell($shot, $gw, 5, 0, $gw, [ref]$lines0)
+    Write-Host "       (board $Size cells, cell $cell0 px, $lines0 grid lines)"
 
-    $rect2 = New-Object NativeCheck+RECT
-    [void][NativeCheck]::GetClientRect($script:hwnd, [ref]$rect2)
-    $afterW = $rect2.right - $rect2.left
+    # ---- 4. the cell-size slider zooms the board --------------------------
+    $want = [math]::Min(96, $cell0 + 14)
+    [void][NativeCheck]::SendMessageW($script:slider, 0x0405, [IntPtr]1, [IntPtr]$want)   # TBM_SETPOS
+    [void][NativeCheck]::PostMessageW($script:hwnd, 0x0114, [IntPtr]8, $script:slider)    # WM_HSCROLL / TB_ENDTRACK
+    Start-Sleep -Seconds 2
+
+    $client2 = Grab-Client
+    $shot2 = $client2.shot
+    $w2 = $client2.w
+    $h2 = $client2.h
+    $lines2 = 0
+    $cell2 = [NativeCheck]::DetectCell($shot2, $w2, 67, 20, $w2 - 24 - 320 - 18, [ref]$lines2)
     $box = New-Object System.Text.StringBuilder 64
     [void][NativeCheck]::SendMessageText($script:firstEdit, 0x000D, [IntPtr]64, $box)
-    Report "the slider writes into the size box" ($box.ToString() -eq "10") "size box says '$($box.ToString())'"
+    Report "the zoom slider enlarges the cells" ($cell2 -eq $want) "asked for $want, drew $cell2"
+    Report "zooming keeps the number of cells" ($lines2 -eq $lines0) "grid lines $lines0 -> $lines2"
+    Report "zooming leaves the board size field alone" ($box.ToString() -eq "$Size") "size box says '$($box.ToString())'"
+    Write-Host "       (client $w2 x $h2, cell $cell2)"
 
-    # the window keeps its size; the grid is re-fitted inside it
-    $pt2 = New-Object NativeCheck+POINT
-    [void][NativeCheck]::ClientToScreen($script:hwnd, [ref]$pt2)
-    $shot2 = [NativeCheck]::Grab($pt2.x, $pt2.y, $afterW, $rect2.bottom - $rect2.top)
-    $lines = 0
-    $cell10 = [NativeCheck]::DetectCell($shot2, $afterW, 67, 20, $afterW - 24 - 320 - 18, [ref]$lines)
-    $availW = ($afterW - 24 - 320) - 18 - 24
-    $availH = ($rect2.bottom - $rect2.top) - 62 - 118
-    $expectedCell = [math]::Max(11, [math]::Min(96, [math]::Min([math]::Floor($availW / 10), [math]::Floor($availH / 10))))
-    Report "a 10x10 board rescales inside the same window" ($cell10 -eq $expectedCell) "drew cells of $cell10, expected $expectedCell"
-    Write-Host "       (client $afterW x $($rect2.bottom - $rect2.top), cell $cell10, $lines grid lines)"
+    # zoom back out to a fixed small size
+    [void][NativeCheck]::SendMessageW($script:slider, 0x0405, [IntPtr]1, [IntPtr]16)      # TBM_SETPOS
+    [void][NativeCheck]::PostMessageW($script:hwnd, 0x0114, [IntPtr]8, $script:slider)    # WM_HSCROLL / TB_ENDTRACK
+    Start-Sleep -Seconds 2
+    $client4 = Grab-Client
+    $shot4 = $client4.shot
+    $w4 = $client4.w
+    $lines4 = 0
+    $cell4 = [NativeCheck]::DetectCell($shot4, $w4, 67, 20, $w4 - 24 - 320 - 18, [ref]$lines4)
+    Report "the zoom slider shrinks the cells" ($cell4 -eq 16) "asked for 16, drew $cell4"
+    Report "shrinking keeps the number of cells" ($lines4 -eq $lines0) "grid lines $lines0 -> $lines4"
 
     # ---- 5. resizing the window rescales the grid --------------------------
     $wr = New-Object NativeCheck+RECT
@@ -348,44 +376,40 @@ if ($script:slider -ne [IntPtr]::Zero) {
     $bigH = $wr.bottom - $wr.top + 260
     [void][NativeCheck]::SetWindowPos($script:hwnd, [IntPtr]::Zero, 0, 0, $bigW, $bigH, 0x0014) # SWP_NOMOVE|SWP_NOZORDER
     Start-Sleep -Seconds 2
-    $rect3 = New-Object NativeCheck+RECT
-    [void][NativeCheck]::GetClientRect($script:hwnd, [ref]$rect3)
-    $pt3 = New-Object NativeCheck+POINT
-    [void][NativeCheck]::ClientToScreen($script:hwnd, [ref]$pt3)
-    $w3 = $rect3.right - $rect3.left
-    $h3 = $rect3.bottom - $rect3.top
-    $shot3 = [NativeCheck]::Grab($pt3.x, $pt3.y, $w3, $h3)
+    $client3 = Grab-Client
+    $shot3 = $client3.shot
+    $w3 = $client3.w
+    $h3 = $client3.h
     $lines3 = 0
     $cell3 = [NativeCheck]::DetectCell($shot3, $w3, 67, 20, $w3 - 24 - 320 - 18, [ref]$lines3)
     $availW3 = ($w3 - 24 - 320) - 18 - 24
     $availH3 = $h3 - 62 - 118
-    $expected3 = [math]::Max(11, [math]::Min(96, [math]::Min([math]::Floor($availW3 / 10), [math]::Floor($availH3 / 10))))
-    Report "a bigger window grows the grid" ($cell3 -eq $expected3 -and $cell3 -gt $cell10) "cells $cell10 -> $cell3, expected $expected3"
+    $expected3 = [math]::Max(11, [math]::Min(96, [math]::Min([math]::Floor($availW3 / $Size), [math]::Floor($availH3 / $Size))))
+    Report "a bigger window grows the grid" ($cell3 -eq $expected3 -and $cell3 -gt $cell4) "cells $cell4 -> $cell3, expected $expected3"
+    Report "resizing keeps the number of cells" ($lines3 -eq $lines0) "grid lines $lines0 -> $lines3"
     Write-Host "       (client $w3 x $h3, cell $cell3)"
 
     # ---- 6. the footer text never runs into the control column -------------
     # the footer hints use rgb(112,128,136); the control column draws its own
     # text in black, so any of that colour right of the board is an overflow
-    $boardRight = 24 + $cell3 * 10
-    $spill = [NativeCheck]::CountColor($shot3, $w3, $boardRight + 2, 62 + $cell3 * 10 + 2, $w3, $h3, 112, 128, 136, 6)
+    $boardRight = 24 + $cell3 * $Size
+    $spill = [NativeCheck]::CountColor($shot3, $w3, $boardRight + 2, 62 + $cell3 * $Size + 2, $w3, $h3, 112, 128, 136, 6)
     Report "board text stays out of the control column" ($spill -eq 0) "$spill footer pixels spilled into the panel"
 
     # and the same in a window squeezed to the minimum allowed size
     [void][NativeCheck]::SetWindowPos($script:hwnd, [IntPtr]::Zero, 0, 0, 300, 300, 0x0014)
     Start-Sleep -Seconds 2
-    $rect4 = New-Object NativeCheck+RECT
-    [void][NativeCheck]::GetClientRect($script:hwnd, [ref]$rect4)
-    $pt4 = New-Object NativeCheck+POINT
-    [void][NativeCheck]::ClientToScreen($script:hwnd, [ref]$pt4)
-    $w4 = $rect4.right - $rect4.left
-    $h4 = $rect4.bottom - $rect4.top
-    $shot4 = [NativeCheck]::Grab($pt4.x, $pt4.y, $w4, $h4)
-    $lines4 = 0
-    $cell4 = [NativeCheck]::DetectCell($shot4, $w4, 67, 20, $w4 - 24 - 320 - 18, [ref]$lines4)
-    $spill4 = [NativeCheck]::CountColor($shot4, $w4, 24 + $cell4 * 10 + 2, 62 + $cell4 * 10 + 2, $w4, $h4, 112, 128, 136, 6)
-    Report "the minimum window still keeps the footer inside the board column" ($spill4 -eq 0) "$spill4 footer pixels spilled at the minimum size"
-    Report "the grid stays at least 11 pixels per cell" ($cell4 -ge 11) "cells shrank to $cell4"
-    Write-Host "       (minimum client $w4 x $h4, cell $cell4)"
+    $client5 = Grab-Client
+    $shot5 = $client5.shot
+    $w5 = $client5.w
+    $h5 = $client5.h
+    $lines5 = 0
+    $cell5 = [NativeCheck]::DetectCell($shot5, $w5, 67, 20, $w5 - 24 - 320 - 18, [ref]$lines5)
+    $spill5 = [NativeCheck]::CountColor($shot5, $w5, 24 + $cell5 * $Size + 2, 62 + $cell5 * $Size + 2, $w5, $h5, 112, 128, 136, 6)
+    Report "the minimum window still keeps the footer inside the board column" ($spill5 -eq 0) "$spill5 footer pixels spilled at the minimum size"
+    Report "the grid stays at least 11 pixels per cell" ($cell5 -ge 11) "cells shrank to $cell5"
+    Report "the minimum window keeps all the cells" ($lines5 -eq $lines0) "grid lines $lines0 -> $lines5"
+    Write-Host "       (minimum client $w5 x $h5, cell $cell5)"
 }
 
 if (-not $proc.HasExited) { $proc.Kill() }

@@ -405,29 +405,65 @@ async function main() {
   check("a new board size is applied", resized.cols === 12 && resized.rows === 12, JSON.stringify(resized));
   check("the heading follows the size", resized.heading === "Tapa 12x12", resized.heading);
   check("settings are remembered in localStorage", /size = 12/.test(resized.saved || ""), resized.saved);
+
+  // ---- the zoom slider changes how big the board is drawn ------------------
+  const beforeZoom = await evaluate(`({ cell: ui.cell, cols: ui.cols, slider: document.getElementById("zoom-slider").value })`);
   check(
-    "the size slider follows the applied size",
-    await evaluate(`document.getElementById("f-size-slider").value === "12"`),
+    "the zoom slider shows the current cell size",
+    Number(beforeZoom.slider) === beforeZoom.cell,
+    JSON.stringify(beforeZoom),
   );
 
-  // ---- the size slider rebuilds the board ---------------------------------
   await evaluate(`(() => {
-    const slider = document.getElementById("f-size-slider");
-    slider.value = "16";
+    const slider = document.getElementById("zoom-slider");
+    slider.value = "64";
     slider.dispatchEvent(new Event("input", { bubbles: true }));
-    slider.dispatchEvent(new Event("change", { bubbles: true }));
   })()`);
-  await waitFor(`!ui.busy && ui.cols === 16`, "the size slider rebuilds the board", 90000);
+  await sleep(120);
+  const zoomedIn = await evaluate(`({
+    cell: ui.cell,
+    cols: ui.cols,
+    canvas: document.getElementById("board").style.width,
+    zoom: ui.zoom,
+  })`);
+  check("dragging the zoom slider enlarges the cells", zoomedIn.cell === 64, JSON.stringify(zoomedIn));
+  check("zooming does not change the board size", zoomedIn.cols === beforeZoom.cols, JSON.stringify(zoomedIn));
+  check("the canvas grows with the zoom", zoomedIn.canvas === "768px", zoomedIn.canvas);
+
+  await evaluate(`(() => {
+    const slider = document.getElementById("zoom-slider");
+    slider.value = "18";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  await sleep(120);
+  const zoomedOut = await evaluate(`({ cell: ui.cell, canvas: document.getElementById("board").style.width })`);
+  check("dragging the zoom slider shrinks the cells", zoomedOut.cell === 18, JSON.stringify(zoomedOut));
+
+  await evaluate(`document.getElementById("btn-fit").click()`);
+  await sleep(150);
+  const fitted = await evaluate(`({ cell: ui.cell, zoom: ui.zoom, slider: document.getElementById("zoom-slider").value })`);
+  check("Fit goes back to filling the window", fitted.zoom === null && fitted.cell !== 18, JSON.stringify(fitted));
+  check(
+    "the slider follows the fitted size",
+    Number(fitted.slider) === fitted.cell,
+    JSON.stringify(fitted),
+  );
+
+  // ---- the board-size slider rebuilds the board ---------------------------
+  await evaluate(`(() => {
+    const input = document.getElementById("f-size");
+    input.value = "16";
+    document.getElementById("btn-apply").click();
+  })()`);
+  await waitFor(`!ui.busy && ui.cols === 16`, "a new board size rebuilds the board", 90000);
   const sliderState = await evaluate(`({
     cols: ui.cols,
     field: document.getElementById("f-size").value,
-    slider: document.getElementById("f-size-slider").value,
     heading: document.getElementById("title").textContent,
   })`);
-  check("the size slider rebuilds the board", sliderState.cols === 16, JSON.stringify(sliderState));
-  check("the slider writes into the size field", sliderState.field === "16", sliderState.field);
-  check("the slider keeps its own value", sliderState.slider === "16", sliderState.slider);
-  check("the heading follows the slider", sliderState.heading === "Tapa 16x16", sliderState.heading);
+  check("a new board size rebuilds the board", sliderState.cols === 16, JSON.stringify(sliderState));
+  check("the size field keeps the applied value", sliderState.field === "16", sliderState.field);
+  check("the heading follows the size", sliderState.heading === "Tapa 16x16", sliderState.heading);
 
   // ---- print and bench run in wasm and show their output ------------------
   await evaluate(`document.getElementById("btn-bench").click()`);
