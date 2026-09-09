@@ -1,4 +1,4 @@
-//! GDI rendering. Everything is drawn into an off-screen bitmap first so the
+﻿//! GDI rendering. Everything is drawn into an off-screen bitmap first so the
 //! board never flickers.
 
 use std::mem;
@@ -269,6 +269,13 @@ pub unsafe fn paint(app: &App, hwnd: HWND) {
 unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
     let g = &app.gfx;
     FillRect(hdc, &rect(0, 0, w, h), g.brush_bg);
+    // the control column is one white card, painted before any text so the
+    // header stays readable on top of it
+    FillRect(
+        hdc,
+        &rect(g.panel_x - PANEL_GAP / 2, 0, w, h),
+        g.brush_empty,
+    );
 
     // ---- header -----------------------------------------------------------
     text(
@@ -551,6 +558,7 @@ unsafe fn draw_clue(hdc: HDC, g: &Gfx, clue: &[u8], r: RECT, color: COLORREF) {
         );
     }
 }
+
 
 
 

@@ -67,7 +67,7 @@ unsafe fn make_button(
         0,
         wide("BUTTON").as_ptr(),
         wide(text).as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON as u32,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | BS_PUSHBUTTON as u32,
         x,
         y,
         w,
@@ -93,8 +93,7 @@ unsafe fn make_label(
         0,
         wide("STATIC").as_ptr(),
         wide(text).as_ptr(),
-        WS_CHILD | WS_VISIBLE,
-        x,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,        x,
         y,
         w,
         20,
@@ -153,7 +152,7 @@ pub unsafe fn create(app: &mut App) {
             WS_EX_CLIENTEDGE,
             wide("EDIT").as_ptr(),
             wide("").as_ptr(),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | ES_AUTOHSCROLL,
             x + LABEL_W + 8,
             top,
             EDIT_W,
@@ -191,8 +190,7 @@ pub unsafe fn create(app: &mut App) {
         0,
         wide("STATIC").as_ptr(),
         wide("").as_ptr(),
-        WS_CHILD | WS_VISIBLE,
-        x,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,        x,
         MESSAGE_TOP,
         PANEL_W,
         44,
@@ -369,4 +367,5 @@ pub unsafe fn refresh_fonts(app: &App) {
     }
     SendMessageW(controls.message, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
 }
+
 

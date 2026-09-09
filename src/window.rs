@@ -1,4 +1,4 @@
-﻿//! Win32 window, application state and input handling.
+//! Win32 window, application state and input handling.
 
 use std::collections::VecDeque;
 use std::mem;
@@ -474,6 +474,48 @@ impl App {
         }
     }
 
+    /// Screen rectangle of one board cell, used for tight invalidation.
+    fn cell_rect(&self, idx: usize) -> Option<RECT> {
+        let puzzle = self.puzzle.as_ref()?;
+        let (x, y) = puzzle.grid.xy(idx);
+        let px = self.gfx.grid_x + x as i32 * self.gfx.cell;
+        let py = self.gfx.grid_y + y as i32 * self.gfx.cell;
+        Some(RECT {
+            left: px,
+            top: py,
+            right: px + self.gfx.cell,
+            bottom: py + self.gfx.cell,
+        })
+    }
+
+    fn grid_rect(&self) -> RECT {
+        RECT {
+            left: self.gfx.grid_x - 2,
+            top: self.gfx.grid_y - 2,
+            right: self.gfx.grid_x + self.gfx.cols as i32 * self.gfx.cell + 2,
+            bottom: self.gfx.grid_y + self.gfx.rows as i32 * self.gfx.cell + 2,
+        }
+    }
+
+    /// Repaint just the given cells. Enough for hover feedback, and it never
+    /// touches the child controls.
+    pub fn invalidate_cells(&self, hwnd: HWND, cells: &[Option<usize>]) {
+        unsafe {
+            for cell in cells.iter().flatten() {
+                if let Some(rect) = self.cell_rect(*cell) {
+                    InvalidateRect(hwnd, &rect, 0);
+                }
+            }
+        }
+    }
+
+    pub fn invalidate_grid(&self, hwnd: HWND) {
+        unsafe {
+            let rect = self.grid_rect();
+            InvalidateRect(hwnd, &rect, 0);
+        }
+    }
+
     /// Rebuild the board layout for the current settings and start over.
     /// Called after the settings panel applied a new configuration.
     pub fn apply_settings(&mut self, size_changed: bool) {
@@ -484,7 +526,7 @@ impl App {
                 self.gfx = Gfx::new(size, size);
                 self.size = size;
 
-                let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+                let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
                 let mut rc = RECT {
                     left: 0,
                     top: 0,
@@ -621,27 +663,28 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
             let (x, y) = mouse_pos(lparam);
             if app.drag.is_some() {
                 app.drag_to(x, y);
-                InvalidateRect(hwnd, ptr::null(), 0);
+                app.invalidate_grid(hwnd);
                 return 0;
             }
             let cell = app.cell_at(x, y);
             let shift = GetAsyncKeyState(VK_SHIFT_KEY) < 0;
             let moved = cell != app.hover;
+            let previous = app.hover;
             if moved {
                 app.hover = cell;
             }
             if shift || app.highlight_from_hover {
                 app.update_hover_highlight(shift);
-                InvalidateRect(hwnd, ptr::null(), 0);
+                app.invalidate_grid(hwnd);
             } else if moved {
-                InvalidateRect(hwnd, ptr::null(), 0);
+                app.invalidate_cells(hwnd, &[previous, cell]);
             }
             0
         }
         WM_KEYUP => {
             if wparam as i32 == VK_SHIFT_KEY {
                 app.update_hover_highlight(false);
-                InvalidateRect(hwnd, ptr::null(), 0);
+                app.invalidate_grid(hwnd);
             }
             0
         }
@@ -649,14 +692,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
             let (x, y) = mouse_pos(lparam);
             app.begin_drag(x, y, true);
             SetCapture(hwnd);
-            InvalidateRect(hwnd, ptr::null(), 0);
+            app.invalidate_grid(hwnd);
             0
         }
         WM_RBUTTONDOWN => {
             let (x, y) = mouse_pos(lparam);
             app.begin_drag(x, y, false);
             SetCapture(hwnd);
-            InvalidateRect(hwnd, ptr::null(), 0);
+            app.invalidate_grid(hwnd);
             0
         }
         WM_LBUTTONUP | WM_RBUTTONUP => {
@@ -706,7 +749,7 @@ pub fn run(seed: u64, settings: &Settings, settings_path: std::path::PathBuf) ->
             return Err(format!("RegisterClassW failed ({})", GetLastError()));
         }
 
-        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
         let mut rc = RECT {
             left: 0,
             top: 0,
@@ -762,6 +805,7 @@ pub fn run(seed: u64, settings: &Settings, settings_path: std::path::PathBuf) ->
         Ok(())
     }
 }
+
 
 
 
