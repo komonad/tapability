@@ -16,7 +16,9 @@ const EMPTY = 2;
 
 const C = {
   background: "#f6f7fa",
-  unknown: "#e8eaf0",
+  // an undecided cell and a cell the player marked empty share their
+  // background; the empty mark only adds the small dot
+  unknown: "#ffffff",
   empty: "#ffffff",
   wall: "#2a2d3c",
   clue: "#fdf8e2",
@@ -41,6 +43,8 @@ const MIN_SIZE = 3;
 const MAX_SIZE = 60;
 /** How far a finger may wander and still count as a tap rather than a stroke. */
 const TAP_MOVE_PX = 10;
+/** How long an operation may take before the board is covered. */
+const VEIL_DELAY_MS = 200;
 const STORAGE_KEY = "tapa.settings";
 const LANG_KEY = "tapa.lang";
 /** Simplified Chinese is the default, whatever the browser asks for. */
@@ -127,6 +131,8 @@ const ui = {
   /** Pending touch: { cell, x, y } until it turns into a tap or a stroke. */
   tap: null,
   busy: false,
+  /** Whether the board is covered while a slow operation runs. */
+  veil: false,
   fields: [],
   outputTitle: "",
 };
@@ -138,6 +144,7 @@ const worker = new Worker(
   // wasm request too (GitHub Pages caches for ten minutes)
   "worker.js" + (window.TAPA_VERSION ? `?v=${window.TAPA_VERSION}` : ""),
 );
+let veilTimer = 0;
 let nextId = 1;
 const waiting = new Map();
 
@@ -251,7 +258,7 @@ function setStatus(text, kind) {
   els.status.className = `status${kind ? ` ${kind}` : ""}`;
 }
 
-function setBusy(busy) {
+function setBusy(busy, { veil = false } = {}) {
   ui.busy = busy;
   for (const id of buttonIds) {
     els[id].disabled = busy;
@@ -260,6 +267,18 @@ function setBusy(busy) {
   if (slider) slider.disabled = busy;
   const fit = document.getElementById("btn-fit");
   if (fit) fit.disabled = busy;
+
+  // Only cover the board when an operation really is slow. Instant commands
+  // (undo, check, a clue step) would otherwise flash the whole board.
+  window.clearTimeout(veilTimer);
+  if (!busy) {
+    ui.veil = false;
+  } else if (veil) {
+    veilTimer = window.setTimeout(() => {
+      ui.veil = true;
+      render();
+    }, VEIL_DELAY_MS);
+  }
   if (ui.state) {
     updateChrome(ui.state);
   }
@@ -349,7 +368,7 @@ function render() {
 
   const state = ui.state;
   if (!state || state.w === 0 || !ui.cells || ui.cells.length !== cols * rows) {
-    placeholder(ctx, width, height, "Generating a puzzle with a unique solution...");
+    placeholder(ctx, width, height, t("status.generating"));
     return;
   }
 
@@ -424,19 +443,36 @@ function render() {
     });
   }
 
-  // grid lines
+  // grid lines, but never between two cells that are already filled in: a wall
+  // group (or the spotlight) then reads as one solid shape
+  const solid = (i) => {
+    if (ui.clues.has(i)) return false;
+    if (showSolution && solution) return solution[i] === WALL;
+    if (highlight && highlight[i]) return true;
+    return cells[i] === WALL;
+  };
   ctx.strokeStyle = C.grid;
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let x = 0; x <= cols; x += 1) {
     const px = x * cell + 0.5;
-    ctx.moveTo(px, 0);
-    ctx.lineTo(px, height);
+    for (let y = 0; y < rows; y += 1) {
+      const left = x > 0 ? y * cols + x - 1 : -1;
+      const right = x < cols ? y * cols + x : -1;
+      if (left >= 0 && right >= 0 && solid(left) && solid(right)) continue;
+      ctx.moveTo(px, y * cell);
+      ctx.lineTo(px, (y + 1) * cell);
+    }
   }
   for (let y = 0; y <= rows; y += 1) {
     const py = y * cell + 0.5;
-    ctx.moveTo(0, py);
-    ctx.lineTo(width, py);
+    for (let x = 0; x < cols; x += 1) {
+      const above = y > 0 ? (y - 1) * cols + x : -1;
+      const below = y < rows ? y * cols + x : -1;
+      if (above >= 0 && below >= 0 && solid(above) && solid(below)) continue;
+      ctx.moveTo(x * cell, py);
+      ctx.lineTo((x + 1) * cell, py);
+    }
   }
   ctx.stroke();
 
@@ -477,10 +513,10 @@ function render() {
   ctx.lineWidth = state.solved ? 3 : 2;
   ctx.strokeRect(1, 1, width - 2, height - 2);
 
-  if (ui.busy) {
+  if (ui.busy && ui.veil) {
     ctx.fillStyle = "rgba(246, 247, 250, 0.55)";
     ctx.fillRect(0, 0, width, height);
-    placeholder(ctx, width, height, "Working in WebAssembly...");
+    placeholder(ctx, width, height, t("busy.working"));
   }
 }
 
@@ -992,7 +1028,7 @@ function newSeed() {
 }
 
 async function generate(seed) {
-  setBusy(true);
+  setBusy(true, { veil: true });
   setStatus(t("status.generating"), "");
   const state = await send(`generate ${seed}`);
   setBusy(false);
@@ -1012,7 +1048,7 @@ async function batch(kind) {
   const count = kind === "bench" ? 3 : 1;
   ui.outputTitle =
     kind === "bench" ? fill(t("output.bench"), [count]) : t("output.print");
-  setBusy(true);
+  setBusy(true, { veil: true });
   setStatus(kind === "bench" ? fill(t("output.bench"), [count]) : t("output.print"), "");
   const state = await send(`${kind} ${count}`);
   setBusy(false);

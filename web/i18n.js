@@ -47,6 +47,7 @@ window.TAPA_I18N = {
     "message.saved": "已保存在浏览器本地",
 
     "status.idle": "点“新题目”开始。",
+    "busy.working": "正在 WebAssembly 里计算…",
     "status.generating": "正在生成一道唯一解的题目…",
     "status.generation_failed": "生成失败（种子 {0}）：换小一点的棋盘，或把预算调大。",
     "status.cells_left": "还剩 {0} 格",
@@ -131,6 +132,7 @@ window.TAPA_I18N = {
     "message.saved": "saved in this browser",
 
     "status.idle": "Press New puzzle to generate one.",
+    "busy.working": "Working in WebAssembly...",
     "status.generating": "Generating a puzzle with a unique solution...",
     "status.generation_failed":
       "generation failed (seed {0}); try a smaller board or a bigger budget",

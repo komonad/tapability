@@ -181,7 +181,9 @@ impl Gfx {
             cols,
             rows,
             brush_bg: CreateSolidBrush(rgb(246, 247, 250)),
-            brush_unknown: CreateSolidBrush(rgb(232, 234, 240)),
+            // an undecided cell and a cell marked empty share their background;
+            // the empty mark only adds the small dot
+            brush_unknown: CreateSolidBrush(rgb(255, 255, 255)),
             brush_empty: CreateSolidBrush(rgb(255, 255, 255)),
             brush_black: CreateSolidBrush(rgb(42, 45, 60)),
             brush_clue: CreateSolidBrush(rgb(253, 248, 226)),
@@ -443,17 +445,64 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
                 }
             }
 
-            // grid lines
+            // grid lines, but never between two cells that are already filled
+            // in: a wall group (or the spotlight) then reads as one solid shape
+            let solid = |idx: usize| -> bool {
+                if puzzle.is_clue(idx) {
+                    return false;
+                }
+                if app.show_solution {
+                    return puzzle.solution[idx] == BLACK;
+                }
+                if app.highlight.get(idx).copied().unwrap_or(false) {
+                    return true;
+                }
+                app.cells[idx] == BLACK
+            };
             let old = SelectObject(hdc, g.pen_grid as HGDIOBJ);
             for x in 0..=g.cols {
                 let px = g.grid_x + x as i32 * g.cell;
-                MoveToEx(hdc, px, g.grid_y, ptr::null_mut());
-                LineTo(hdc, px, g.grid_y + g.rows as i32 * g.cell);
+                for y in 0..g.rows {
+                    let left = if x > 0 {
+                        Some(puzzle.grid.idx(x - 1, y))
+                    } else {
+                        None
+                    };
+                    let right = if x < g.cols {
+                        Some(puzzle.grid.idx(x, y))
+                    } else {
+                        None
+                    };
+                    if let (Some(a), Some(b)) = (left, right) {
+                        if solid(a) && solid(b) {
+                            continue;
+                        }
+                    }
+                    MoveToEx(hdc, px, g.grid_y + y as i32 * g.cell, ptr::null_mut());
+                    LineTo(hdc, px, g.grid_y + (y as i32 + 1) * g.cell);
+                }
             }
             for y in 0..=g.rows {
                 let py = g.grid_y + y as i32 * g.cell;
-                MoveToEx(hdc, g.grid_x, py, ptr::null_mut());
-                LineTo(hdc, g.grid_x + g.cols as i32 * g.cell, py);
+                for x in 0..g.cols {
+                    let above = if y > 0 {
+                        Some(puzzle.grid.idx(x, y - 1))
+                    } else {
+                        None
+                    };
+                    let below = if y < g.rows {
+                        Some(puzzle.grid.idx(x, y))
+                    } else {
+                        None
+                    };
+                    if let (Some(a), Some(b)) = (above, below) {
+                        if solid(a) && solid(b) {
+                            continue;
+                        }
+                    }
+                    MoveToEx(hdc, g.grid_x + x as i32 * g.cell, py, ptr::null_mut());
+                    LineTo(hdc, g.grid_x + (x as i32 + 1) * g.cell, py);
+                }
             }
             SelectObject(hdc, old);
 

@@ -305,6 +305,39 @@ foreach ($c in $clueCells) {
 Report "Alt + click steps the clue under the cursor" ($altDiff -gt 0) "no clue produced a deduction"
 Write-Host "       (clue $altCell changed $altDiff bytes)"
 
+# ---- 2b. two touching walls read as one block -----------------------------
+# find a free pair next to each other, and another pair well away from it
+$pair = $null
+$far = $null
+for ($y = 0; $y -lt $Size; $y++) {
+    for ($x = 0; $x + 1 -lt $Size; $x++) {
+        if ($flags[$y * $Size + $x] -or $flags[$y * $Size + $x + 1]) { continue }
+        if (-not $pair) { $pair = @($x, $y) }
+        elseif (-not $far -and ([math]::Abs($x - $pair[0]) + [math]::Abs($y - $pair[1])) -gt 2) { $far = @($x, $y) }
+    }
+}
+if ($pair) {
+    Click-Cell $pair[0] $pair[1] $false
+    Click-Cell ($pair[0] + 1) $pair[1] $false
+    $shot2 = Grab-Stable
+    $cellPx = $script:cell
+    # the grid grab starts at the grid origin, so cell coordinates are direct
+    $sharedOffset = ((($pair[1] * $cellPx + [math]::Floor($cellPx / 2)) * $gw) + (($pair[0] + 1) * $cellPx)) * 4
+    $shared = @($shot2[$sharedOffset + 2], $shot2[$sharedOffset + 1], $shot2[$sharedOffset])
+    $isGrid = ([math]::Abs($shared[0] - 168) -lt 20) -and ([math]::Abs($shared[1] - 174) -lt 20) -and ([math]::Abs($shared[2] - 188) -lt 20)
+    Report "no grid line between two touching walls" (-not $isGrid) "edge is rgb($($shared -join ','))"
+
+    if ($far) {
+        $plainOffset = (((($far[1] * $cellPx) + [math]::Floor($cellPx / 2)) * $gw) + (($far[0] + 1) * $cellPx)) * 4
+        $plain = @($shot2[$plainOffset + 2], $shot2[$plainOffset + 1], $shot2[$plainOffset])
+        $isGridPlain = ([math]::Abs($plain[0] - 168) -lt 20) -and ([math]::Abs($plain[1] - 174) -lt 20) -and ([math]::Abs($plain[2] - 188) -lt 20)
+        Report "grid lines are still drawn next to plain cells" $isGridPlain "edge is rgb($($plain -join ','))"
+    }
+    # put the board back for the checks that follow
+    [void][NativeCheck]::PostMessageW($script:hwnd, 0x0100, [IntPtr]0x52, [IntPtr]0)   # R = clear
+    Start-Sleep -Seconds 1
+}
+
 # ---- 3. Alt + click on a non-clue cell paints nothing ---------------------
 $before = Grab-Stable
 Click-Cell $freeCells[$freeCells.Count - 1][0] $freeCells[$freeCells.Count - 1][1] $true

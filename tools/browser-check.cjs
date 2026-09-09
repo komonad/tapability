@@ -228,6 +228,107 @@ async function main() {
   })()`);
   check("clue cells are drawn", painted.clue > 0, JSON.stringify(painted));
 
+  // ---- undecided and empty cells share a background -----------------------
+  const bgCells = await evaluate(`(() => {
+    const free = [];
+    for (let i = 0; i < ui.cells.length; i += 1) {
+      if (!ui.clues.has(i) && ui.cells[i] === 0) free.push(i);
+    }
+    return { unknown: free[0], empty: free[1] };
+  })()`);
+  await evaluate(`(async () => {
+    const x = ${bgCells.empty} % ui.cols;
+    const y = Math.floor(${bgCells.empty} / ui.cols);
+    const state = await send(\`paint begin \${x} \${y} 0\`);
+    applyState(state);
+    await send("paint end");
+  })()`);
+  await sleep(200);
+  const bg = await evaluate(`(() => {
+    const ctx = document.getElementById("board").getContext("2d");
+    const dpr = ui.dpr, cell = ui.cell;
+    const at = (i, ox, oy) => {
+      const x = (i % ui.cols) * cell, y = Math.floor(i / ui.cols) * cell;
+      const d = ctx.getImageData(Math.round((x + ox) * dpr), Math.round((y + oy) * dpr), 1, 1).data;
+      return [d[0], d[1], d[2]];
+    };
+    return {
+      unknown: at(${bgCells.unknown}, 3, 3),
+      empty: at(${bgCells.empty}, 3, 3),
+      dot: at(${bgCells.empty}, cell / 2, cell / 2),
+    };
+  })()`);
+  check(
+    "an empty mark keeps the undecided background",
+    JSON.stringify(bg.unknown) === JSON.stringify(bg.empty),
+    JSON.stringify(bg),
+  );
+  check(
+    "an empty mark is just a dot",
+    JSON.stringify(bg.dot) !== JSON.stringify(bg.empty),
+    JSON.stringify(bg),
+  );
+
+  // ---- no grid line between two touching walls ----------------------------
+  const wallPair = await evaluate(`(() => {
+    for (let y = 0; y < ui.rows; y += 1) {
+      for (let x = 0; x + 1 < ui.cols; x += 1) {
+        const a = y * ui.cols + x, b = a + 1;
+        if (!ui.clues.has(a) && !ui.clues.has(b) && ui.cells[a] === 0 && ui.cells[b] === 0) {
+          return { a, b, x, y };
+        }
+      }
+    }
+    return null;
+  })()`);
+  await evaluate(`(async () => {
+    const state = await send(\`paint begin ${wallPair.x} ${wallPair.y} 1\`);
+    applyState(state);
+    const second = await send(\`paint begin ${wallPair.x + 1} ${wallPair.y} 1\`);
+    applyState(second);
+    await send("paint end");
+  })()`);
+  await sleep(250);
+  const edges = await evaluate(`(() => {
+    const ctx = document.getElementById("board").getContext("2d");
+    const dpr = ui.dpr, cell = ui.cell;
+    const at = (px, py) => {
+      const d = ctx.getImageData(Math.round(px * dpr), Math.round(py * dpr), 1, 1).data;
+      return [d[0], d[1], d[2]];
+    };
+    const sharedX = (${wallPair.x} + 1) * cell;
+    const rowY = (${wallPair.y} + 0.5) * cell;
+    // a plain/plain edge well away from the spotlighted group
+    let plainPixel = null;
+    for (let y = 0; y < ui.rows && !plainPixel; y += 1) {
+      for (let x = 0; x + 1 < ui.cols && !plainPixel; x += 1) {
+        const a = y * ui.cols + x, b = a + 1;
+        if (ui.clues.has(a) || ui.clues.has(b)) continue;
+        if (ui.cells[a] !== 0 || ui.cells[b] !== 0) continue;
+        if (Math.abs(x - ${wallPair.x}) + Math.abs(y - ${wallPair.y}) < 3) continue;
+        plainPixel = at((x + 1) * cell, (y + 0.5) * cell);
+      }
+    }
+    return { shared: at(sharedX, rowY), plain: plainPixel };
+  })()`);
+  const isGridLine = (c) =>
+    c && Math.abs(c[0] - 168) < 20 && Math.abs(c[1] - 174) < 20 && Math.abs(c[2] - 188) < 20;
+  check(
+    "no grid line between two touching walls",
+    !isGridLine(edges.shared),
+    JSON.stringify(edges.shared),
+  );
+  check(
+    "grid lines are still drawn next to plain cells",
+    isGridLine(edges.plain),
+    JSON.stringify(edges.plain),
+  );
+
+  // leave the board clean for the painting tests that follow
+  await evaluate(`document.getElementById("btn-clear").click()`);
+  await waitFor(`!ui.busy`, "the board is cleared again");
+  await sleep(100);
+
   // ---- helpers to turn a cell index into viewport coordinates -------------
   const geometry = await evaluate(`(() => {
     const r = document.getElementById("board").getBoundingClientRect();
@@ -344,6 +445,39 @@ async function main() {
   await sleep(80);
   const afterUndo = await evaluate(`ui.cells[${from + 3}]`);
   check("Z undoes the last painted cell", afterUndo === 0, String(afterUndo));
+
+  // ---- instant commands never veil the board ------------------------------
+  // sample the veil flag on every repaint while undo runs
+  await evaluate(`(() => {
+    window.__veilSamples = [];
+    window.__originalRender = window.render;
+    window.render = function () {
+      window.__veilSamples.push(Boolean(ui.veil));
+      window.__originalRender();
+    };
+  })()`);
+  await evaluate(`document.getElementById("btn-undo").click()`);
+  await waitFor(`!ui.busy`, "undo finishes");
+  await sleep(200);
+  const veilSamples = await evaluate(`window.__veilSamples`);
+  await evaluate(`(() => {
+    window.render = window.__originalRender;
+    delete window.__originalRender;
+  })()`);
+  check(
+    "undo never covers the board",
+    veilSamples.length > 0 && !veilSamples.includes(true),
+    JSON.stringify(veilSamples),
+  );
+
+  // a genuinely slow operation does cover it, after a short delay
+  await evaluate(`setBusy(true, { veil: true })`);
+  await sleep(400);
+  const veiled = await evaluate(`ui.veil`);
+  await evaluate(`setBusy(false)`);
+  await sleep(100);
+  check("a slow operation covers the board", veiled === true, String(veiled));
+  check("the cover goes away again", (await evaluate(`ui.veil`)) === false);
 
   // ---- stepping a single clue: middle click, Alt + click, and the button ---
   const clueIndex = await evaluate(`[...ui.clues.keys()][0]`);

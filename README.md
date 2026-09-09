@@ -40,7 +40,7 @@ Fill every cell black or white:
 | input | effect |
 |---|---|
 | left click | mark wall (black) |
-| right click | mark empty (white, shown as a small square) |
+| right click | mark empty (white, shown as a small square dot) |
 | left/right drag | paint a whole stroke; the first cell decides whether the stroke marks or clears |
 | click the same mark again | clear the cell |
 | left click on a white cell | switches it to wall, and vice versa |
@@ -80,6 +80,11 @@ check:
   that are only separate *for now* (undecided cells still connect them) are left
   alone.
 * **red 2x2** - any 2x2 block of walls is outlined in red.
+
+Grid lines are never drawn between two cells that are already filled in, so a
+wall group (and the spotlight) reads as one solid shape instead of a grid of
+boxes. An undecided cell and a cell marked empty share the same white
+background: the empty mark only adds a small square dot.
 
 The status bar adds `red = rule broken` whenever something is flagged.
 
@@ -200,6 +205,7 @@ middle button is needed.
 | wall-group spotlight on paint, and on Shift + hover | `floodFill` in `web/app.js` |
 | red clues, red sealed-off walls, red 2x2, red wrong cells | `live_errors` in the engine, drawn as outlines |
 | a small square for an explicit empty mark | canvas |
+| no grid line between two filled cells, so wall groups read as one shape | `solid()` in `web/app.js`, same rule in `src/render.rs` |
 | N / R / C / S / D / Z keys, hold Z to repeat | window key handlers |
 | middle click a clue to step only that clue | `cluestep` command |
 | Alt + click, or the "Step one clue" button, for the same thing | `stepClue` in `web/app.js` |
@@ -214,6 +220,10 @@ against the solution, spotlights a group, resizes the board, checks that
 settings survive a reload, and confirms the page still answers in milliseconds
 while the worker is benching. It writes `web-check.png` so the layout can be
 inspected by eye.
+
+The board is only covered while an operation is genuinely slow (generation,
+bench, print): instant commands such as undo, check or a clue step repaint
+immediately instead of flashing a "working" veil over the board.
 
 ## Deploying the web build
 
