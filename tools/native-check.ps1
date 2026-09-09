@@ -24,6 +24,11 @@ $exe = Join-Path $root "target\release\tapa.exe"
 if (-not (Test-Path $exe)) { throw "build it first: cargo build --release" }
 
 $settings = @("--size", "$Size", "--seed", "$Seed", "--set", "density=0.40-0.50")
+# Keep the game's own remembered settings out of this: the slider calls Apply,
+# which saves, so point it at a scratch file instead.
+$scratch = Join-Path $env:TEMP "tapa-native-check.conf"
+@("size = $Size", "seed = $Seed", "density = 0.40-0.50") | Set-Content -Path $scratch -Encoding ascii
+$settings = @("--config", $scratch) + $settings
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
