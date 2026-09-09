@@ -45,6 +45,11 @@ jobs:
           mkdir -p _site
           cp -r web/. _site/
           cp target/wasm32-unknown-unknown/wasm-release/tapa_wasm.wasm _site/tapa.wasm
+          # stamp the commit into the asset URLs, so a freshly fetched page can
+          # never be paired with scripts the browser cached from an older deploy
+          VERSION="${GITHUB_SHA::7}"
+          sed -i "s/__VERSION__/${VERSION}/g" _site/index.html
+          grep -o '?v=[a-f0-9]*' _site/index.html
           ls -la _site
 
       - name: Check the engine through its ABI

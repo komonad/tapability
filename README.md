@@ -178,6 +178,14 @@ player to read - it reports a status *key* with its numbers (`statusKey`,
 in the UI, including the rules introduction under the title, comes from
 `web/i18n.js`.
 
+Two details keep a deploy from breaking a page that is already open. GitHub
+Pages caches everything for ten minutes, so the workflow stamps the commit sha
+into the asset URLs (`?v=...` on the stylesheet, both scripts and the wasm): a
+freshly fetched page always asks for matching scripts instead of reusing ones
+the browser cached from an earlier deploy. And every translatable element
+carries its Chinese text inline in the HTML, so a page whose scripts are stale
+or blocked still reads correctly instead of showing empty buttons.
+
 Everything the desktop game does is in the browser too, including a touch
 build: a finger that taps a cell cycles it wall -> empty -> unmarked, a finger
 that travels paints a stroke, and tapping a clue steps just that clue, so no

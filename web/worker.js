@@ -23,7 +23,8 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 async function load() {
-  const url = new URL("tapa.wasm", self.location.href);
+  // keep the version the page handed us, so the module is cached per release
+  const url = new URL("tapa.wasm" + self.location.search, self.location.href);
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`cannot fetch ${url.pathname} (${response.status} ${response.statusText})`);

@@ -133,7 +133,11 @@ const ui = {
 
 /* ---- worker plumbing --------------------------------------------------- */
 
-const worker = new Worker("worker.js");
+const worker = new Worker(
+  // carry the published asset version into the worker so it can version the
+  // wasm request too (GitHub Pages caches for ten minutes)
+  "worker.js" + (window.TAPA_VERSION ? `?v=${window.TAPA_VERSION}` : ""),
+);
 let nextId = 1;
 const waiting = new Map();
 

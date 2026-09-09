@@ -667,6 +667,54 @@ async function main() {
   );
   await call("Emulation.setTouchEmulationEnabled", { enabled: false });
 
+  // ---- a phone-sized viewport keeps every control readable ----------------
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 2,
+    mobile: true,
+  });
+  await sleep(500);
+  const phone = await evaluate(`(() => {
+    const visible = (el) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      return r.width > 8 && r.height > 8 && cs.visibility === "visible" &&
+        cs.display !== "none" && Number(cs.opacity) > 0.5;
+    };
+    return {
+      buttons: [...document.querySelectorAll(".panel button")].map((b) => ({
+        id: b.id, text: (b.textContent || "").trim(), visible: visible(b),
+      })),
+      labels: [...document.querySelectorAll(".field label")].map((l) => ({
+        text: (l.textContent || "").trim(), visible: visible(l),
+      })),
+      inputs: [...document.querySelectorAll(".field input")].map((i) => visible(i)),
+      intro: (document.getElementById("intro").textContent || "").trim(),
+      panel: visible(document.querySelector(".panel")),
+    };
+  })()`);
+  check("the control column is visible on a phone viewport", phone.panel);
+  check(
+    "every button is visible and labelled on a phone viewport",
+    phone.buttons.length >= 10 && phone.buttons.every((b) => b.visible && b.text.length > 0),
+    JSON.stringify(phone.buttons.filter((b) => !b.visible || !b.text)),
+  );
+  check(
+    "every setting label is visible on a phone viewport",
+    phone.labels.length >= 9 && phone.labels.every((l) => l.visible && l.text.length > 0),
+    JSON.stringify(phone.labels.filter((l) => !l.visible || !l.text)),
+  );
+  check(
+    "every setting input is visible on a phone viewport",
+    phone.inputs.length >= 9 && phone.inputs.every(Boolean),
+    JSON.stringify(phone.inputs),
+  );
+  check("the rules introduction survives a phone viewport", phone.intro.length > 40, phone.intro);
+  await call("Emulation.clearDeviceMetricsOverride");
+  await sleep(300);
+
   // ---- no stray JavaScript errors ----------------------------------------
   check("no uncaught JavaScript errors", consoleErrors.length === 0, consoleErrors.join(" | "));
 

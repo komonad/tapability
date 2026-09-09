@@ -4,7 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tapa</title>
-    <link rel="stylesheet" href="style.css" />
+    <!-- __VERSION__ is replaced with the commit sha when the site is published,
+         so a fresh page can never be served with stale scripts -->
+    <script>
+      window.TAPA_VERSION = "__VERSION__";
+    </script>
+    <link rel="stylesheet" href="style.css?v=__VERSION__" />
   </head>
   <body>
     <div class="app">
@@ -16,7 +21,11 @@
               <select id="lang" aria-label="Language"></select>
             </label>
           </div>
-          <p id="intro" class="intro" data-i18n="intro"></p>
+          <!-- Every translatable element carries its default (Chinese) text, so
+               the page still reads correctly if the scripts are stale or blocked. -->
+          <p id="intro" class="intro" data-i18n="intro">
+            给每一格涂黑或留白。带数字的格子必须为空，数字是它周围 8 格中黑色连续段的长度（顺时针读，段与段之间至少隔一个白格）；所有黑格必须连成一片，且不能出现 2×2 全黑。每道题都保证恰好一个解。
+          </p>
           <p id="status" class="status"></p>
         </header>
 
@@ -25,69 +34,85 @@
         </div>
 
         <footer class="footer">
-          <p class="hint" data-i18n="hint.mouse"></p>
-          <p class="hint" data-i18n="hint.keys"></p>
-          <p class="hint" data-i18n="hint.touch"></p>
+          <p class="hint" data-i18n="hint.mouse">
+            左键：墙 · 右键：空 · 再点同一个标记：清除 · 拖拽：一笔画
+          </p>
+          <p class="hint" data-i18n="hint.keys">
+            Shift + 悬停：高亮整块墙 · 中键或 Alt+左键点线索：只推这一个线索 · Z：撤销（长按连撤）
+          </p>
+          <p class="hint" data-i18n="hint.touch">
+            触屏：轻点格子循环 墙 → 空 → 清除 · 拖动一笔画 · 轻点线索推该线索
+          </p>
           <p id="info" class="info"></p>
           <p id="stats" class="stats"></p>
         </footer>
       </main>
 
       <aside class="panel">
-        <h2 class="panel-title" data-i18n="panel.controls"></h2>
+        <h2 class="panel-title" data-i18n="panel.controls">操作</h2>
         <div class="buttons">
           <button id="btn-new" type="button">
-            <span data-i18n="btn.new"></span><kbd>N</kbd>
+            <span data-i18n="btn.new">新题目</span><kbd>N</kbd>
           </button>
           <button id="btn-clear" type="button">
-            <span data-i18n="btn.clear"></span><kbd>R</kbd>
+            <span data-i18n="btn.clear">清空</span><kbd>R</kbd>
           </button>
           <button id="btn-check" type="button">
-            <span data-i18n="btn.check"></span><kbd>C</kbd>
+            <span data-i18n="btn.check">检查</span><kbd>C</kbd>
           </button>
           <button id="btn-solution" type="button">
-            <span data-i18n="btn.solution"></span><kbd>S</kbd>
+            <span data-i18n="btn.solution">显示解答</span><kbd>S</kbd>
           </button>
           <button id="btn-onestep" type="button">
-            <span data-i18n="btn.onestep"></span><kbd>D</kbd>
+            <span data-i18n="btn.onestep">单步推理</span><kbd>D</kbd>
           </button>
           <button id="btn-cluestep" type="button">
-            <span data-i18n="btn.cluestep"></span>
+            <span data-i18n="btn.cluestep">推这一个线索</span>
           </button>
           <button id="btn-undo" type="button">
-            <span data-i18n="btn.undo"></span><kbd>Z</kbd>
+            <span data-i18n="btn.undo">撤销</span><kbd>Z</kbd>
           </button>
         </div>
 
-        <h2 class="panel-title" data-i18n="panel.generation"></h2>
+        <h2 class="panel-title" data-i18n="panel.generation">生成参数</h2>
         <div id="fields" class="fields"></div>
         <div class="buttons row">
-          <button id="btn-apply" type="button"><span data-i18n="btn.apply"></span></button>
-          <button id="btn-defaults" type="button"><span data-i18n="btn.defaults"></span></button>
+          <button id="btn-apply" type="button">
+            <span data-i18n="btn.apply">应用并重新生成</span>
+          </button>
+          <button id="btn-defaults" type="button">
+            <span data-i18n="btn.defaults">恢复默认</span>
+          </button>
         </div>
         <p id="help" class="help"></p>
         <p id="message" class="message"></p>
 
-        <h2 class="panel-title" data-i18n="panel.batch"></h2>
+        <h2 class="panel-title" data-i18n="panel.batch">批量工具</h2>
         <div class="buttons row">
-          <button id="btn-print" type="button"><span data-i18n="btn.print"></span></button>
-          <button id="btn-bench" type="button"><span data-i18n="btn.bench"></span></button>
+          <button id="btn-print" type="button">
+            <span data-i18n="btn.print">打印 1 题</span>
+          </button>
+          <button id="btn-bench" type="button">
+            <span data-i18n="btn.bench">测速 3 题</span>
+          </button>
         </div>
-        <p class="help" data-i18n="batch.help"></p>
+        <p class="help" data-i18n="batch.help">
+          两者都在 WebAssembly 里、worker 线程上运行，页面不会卡住。
+        </p>
       </aside>
     </div>
 
     <section id="output-wrap" class="output-wrap" hidden>
       <div class="output-head">
-        <span id="output-title">Output</span>
+        <span id="output-title"></span>
         <button id="btn-output-close" type="button">
-          <span data-i18n="output.close"></span>
+          <span data-i18n="output.close">关闭</span>
         </button>
       </div>
       <pre id="output"></pre>
     </section>
 
-    <script src="i18n.js"></script>
-    <script src="app.js"></script>
+    <script src="i18n.js?v=__VERSION__"></script>
+    <script src="app.js?v=__VERSION__"></script>
   </body>
 </html>
