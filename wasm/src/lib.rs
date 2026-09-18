@@ -30,7 +30,8 @@ use tapa_core::clock::Timer;
 use tapa_core::config::Settings;
 use tapa_core::generator::{generate_with, GenConfig};
 use tapa_core::model::{
-    clue_deductions, clue_satisfiable, clue_step, clue_text, line_cells, live_errors, validate,
+    clue_deductions, clue_satisfiable, clue_satisfied, clue_step, clue_text, line_cells,
+    live_errors, validate,
     LiveErrors, Puzzle, BLACK, UNKNOWN, WHITE,
 };
 use tapa_core::rng::Rng;
@@ -70,6 +71,9 @@ struct Engine {
     cells: Vec<u8>,
     wrong: Vec<bool>,
     errors: LiveErrors,
+    /// Clue cells whose numbers the player has already accounted for, so the
+    /// page can grey those digits out.
+    satisfied_clues: Vec<bool>,
     history: VecDeque<(usize, u8)>,
     /// Cell that was changed last, used to break ties in the error analysis.
     last_changed: Option<usize>,
@@ -104,6 +108,7 @@ impl Engine {
                 cells: Vec::new(),
                 clues: Vec::new(),
             },
+            satisfied_clues: Vec::new(),
             history: VecDeque::new(),
             last_changed: None,
             anchor: None,
@@ -425,6 +430,9 @@ impl Engine {
                 ("solution_hidden", "Solution hidden")
             };
             self.set_status(Kind::Info, key, &[], english.to_string());
+            // the greyed-out clues belong to the player's marks, so they come
+            // and go with the solution
+            self.refresh_derived();
         }
     }
 
@@ -508,9 +516,20 @@ impl Engine {
                 cells: Vec::new(),
                 clues: Vec::new(),
             };
+            self.satisfied_clues = Vec::new();
             return;
         };
         self.errors = live_errors(&puzzle.grid, &self.cells, &puzzle.clues, self.last_changed);
+        // A clue whose numbers are all accounted for is greyed out. That is a
+        // reading of the player's own marks, so it is suppressed while the
+        // solution is on show.
+        let mut satisfied = vec![false; puzzle.grid.len()];
+        if !self.show_solution {
+            for (idx, clue) in puzzle.clues.iter() {
+                satisfied[*idx] = clue_satisfied(&puzzle.grid, &self.cells, *idx, clue);
+            }
+        }
+        self.satisfied_clues = satisfied;
     }
 
     fn refresh_status(&mut self) {
@@ -709,7 +728,7 @@ impl Engine {
 
         match &self.puzzle {
             None => {
-                out.push_str(",\"cells\":\"\",\"clues\":\"\",\"errorsCells\":\"\",\"errorsClues\":\"\",\"wrong\":\"\",\"solution\":\"\"");
+                out.push_str(",\"cells\":\"\",\"clues\":\"\",\"errorsCells\":\"\",\"errorsClues\":\"\",\"doneClues\":\"\",\"wrong\":\"\",\"solution\":\"\"");
             }
             Some(puzzle) => {
                 out.push_str(",\"cells\":\"");
@@ -724,6 +743,8 @@ impl Engine {
                 push_bools(&mut out, &self.errors.cells);
                 out.push_str("\",\"errorsClues\":\"");
                 push_bools(&mut out, &self.errors.clues);
+                out.push_str("\",\"doneClues\":\"");
+                push_bools(&mut out, &self.satisfied_clues);
                 out.push_str("\",\"wrong\":\"");
                 push_bools(&mut out, &self.wrong);
                 out.push_str("\",\"solution\":\"");

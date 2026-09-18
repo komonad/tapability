@@ -2,8 +2,9 @@
 //!
 //! Tapa rules implemented here:
 //!   * a clue cell is never black;
-//!   * the black cells around a clue form runs; read clockwise starting from any
-//!     position, the run lengths must match the clue numbers in order;
+//!   * the black cells around a clue form runs; the run lengths must match the
+//!     clue numbers in order, and the clue may be cut open at any position - the
+//!     numbers are a cycle, so `1 2` and `2 1` are the same clue;
 //!   * all black cells are orthogonally connected;
 //!   * no 2x2 block of cells is completely black.
 
@@ -14,8 +15,12 @@ pub const WHITE: u8 = 2;
 /// Orthogonal neighbour deltas (up, right, down, left).
 pub const ORTHO: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
 
-/// The eight neighbours of a cell, in clockwise order starting from up-left.
-/// Tapa clue numbers describe the black runs in exactly this cyclic order.
+/// The eight neighbours of a cell, in one fixed cyclic order that starts at the
+/// up-left neighbour. The deltas are `(dx, dy)` and `dy` grows downwards, so on
+/// screen this cycle runs counter-clockwise; only the *cycle* matters, though.
+/// Tapa clue numbers are read on it, cut open at any position, and reversing a
+/// legal clue's runs always yields one of its rotations - so "clockwise from
+/// anywhere" and this order describe exactly the same puzzles.
 pub const NEIGHBOR_DELTAS: [(i32, i32); 8] = [
     (-1, -1),
     (-1, 0),
@@ -97,13 +102,14 @@ impl Grid {
     }
 }
 
-/// A clue: the lengths of the black runs around a cell, clockwise from an
-/// arbitrary starting point. Only single digits occur (a run is at most 8).
+/// A clue: the lengths of the black runs around a cell. The numbers have no
+/// fixed starting point - they are a cycle, so `1 2` and `2 1` are the same
+/// clue. Only single digits occur (a run is at most 8).
 pub type Clue = Vec<u8>;
 
-/// Extract the run lengths of the black cells of an 8-bit neighbour mask,
-/// read clockwise. The starting point is irrelevant: any position directly
-/// after a white neighbour yields the same cyclic sequence.
+/// Extract the run lengths of the black cells of an 8-bit neighbour mask on the
+/// neighbour cycle. Where the cycle is cut open is irrelevant: any position
+/// directly after a white neighbour yields the same cyclic sequence.
 pub fn runs_clockwise(mask: u8) -> Vec<u8> {
     if mask == 0 {
         return Vec::new();
@@ -223,8 +229,9 @@ fn largest_region<F: Fn(usize) -> bool>(grid: &Grid, keep: F) -> usize {
     largest
 }
 
-/// The clue produced by a fully filled grid at cell `idx`.
-pub fn clue_of(cells: &[u8], grid: &Grid, idx: usize) -> Clue {
+/// The 8-bit mask of the neighbours of `idx` that hold `BLACK` right now.
+/// Cells outside the grid are never black; `UNKNOWN` counts as "not black yet".
+fn black_mask(grid: &Grid, cells: &[u8], idx: usize) -> u8 {
     let mut mask = 0u8;
     for (k, nb) in grid.neighbors(idx).iter().enumerate() {
         if let Some(nb) = nb {
@@ -233,14 +240,20 @@ pub fn clue_of(cells: &[u8], grid: &Grid, idx: usize) -> Clue {
             }
         }
     }
-    runs_clockwise(mask)
+    mask
+}
+
+/// The clue produced by a fully filled grid at cell `idx`.
+pub fn clue_of(cells: &[u8], grid: &Grid, idx: usize) -> Clue {
+    runs_clockwise(black_mask(grid, cells, idx))
 }
 
 /// A generated puzzle: clues plus the unique solution they describe.
 #[derive(Clone)]
 pub struct Puzzle {
     pub grid: Grid,
-    /// Clues as (cell index, numbers), sorted by cell index.
+    /// Clues as (cell index, numbers), sorted by cell index. The numbers
+    /// themselves are stored smallest first, so no view can suggest an order.
     pub clues: Vec<(usize, Clue)>,
     /// cell index -> index into `clues`
     clue_index: Vec<Option<u16>>,
@@ -250,6 +263,17 @@ pub struct Puzzle {
 
 impl Puzzle {
     pub fn new(grid: Grid, mut clues: Vec<(usize, Clue)>, solution: Vec<u8>, seed: u64) -> Puzzle {
+        // Which number of a clue is written first says nothing: the numbers are
+        // a cycle, read from any starting point. They are stored sorted, so the
+        // window, the web page and the printed report all phrase a clue the
+        // same way and none of them hints at a starting point. Sorting a legal
+        // clue loses nothing: `1 1 2` and `1 2 1` are the same clue, and no
+        // legal clue can be turned into a different one by sorting it (three
+        // runs always contain a repeat, because the runs need their separators
+        // and so sum to at most five).
+        for (_, clue) in clues.iter_mut() {
+            clue.sort_unstable();
+        }
         clues.sort_by_key(|(i, _)| *i);
         let mut clue_index = vec![None; grid.len()];
         for (k, (i, _)) in clues.iter().enumerate() {
@@ -372,6 +396,20 @@ pub fn clue_satisfiable(grid: &Grid, marks: &[u8], idx: usize, clue: &Clue) -> b
     feasible_masks(grid, idx, clue)
         .iter()
         .any(|&m| mask_fits_marks(grid, idx, m, marks))
+}
+
+/// Are the numbers of the clue at `idx` already accounted for?
+///
+/// True when the walls that are on the board already form the clue's runs, so no
+/// further wall may be added around that cell and every neighbour that is still
+/// undecided has to become empty. Walls that are still `UNKNOWN` do not spoil it
+/// - the numbers are met, they simply still have to be marked white.
+///
+/// The numbers are compared the same way they are read: clockwise from *any*
+/// starting point, so a rotated wall pattern counts just as much as an exact
+/// match.
+pub fn clue_satisfied(grid: &Grid, marks: &[u8], idx: usize, clue: &Clue) -> bool {
+    matches_rotation(&runs_clockwise(black_mask(grid, marks, idx)), clue)
 }
 
 /// Flood fill orthogonal components over the cells where `keep` holds.
@@ -723,6 +761,15 @@ mod tests {
     }
 
     #[test]
+    fn clues_are_stored_smallest_first() {
+        let grid = Grid::new(3, 3);
+        let solution = vec![WHITE; 9];
+        let puzzle = Puzzle::new(grid, vec![(4, vec![2u8, 1, 1])], solution, 7);
+        assert_eq!(puzzle.clue_at(4).cloned(), Some(vec![1u8, 1, 2]));
+        assert_eq!(clue_text(puzzle.clue_at(4).unwrap()), "112");
+    }
+
+    #[test]
     fn validate_detects_problems() {
         let grid = Grid::new(2, 2);
         let cells = vec![BLACK; 4];
@@ -756,6 +803,55 @@ mod tests {
         assert!(!clue_satisfiable(&grid, &marks, 4, &clue));
         marks[2] = UNKNOWN;
         assert!(clue_satisfiable(&grid, &marks, 4, &clue));
+    }
+
+    #[test]
+    fn clue_satisfied_needs_every_number_accounted_for() {
+        let grid = Grid::new(3, 3);
+        let clue = vec![2u8];
+        let mut marks = vec![UNKNOWN; 9];
+        assert!(!clue_satisfied(&grid, &marks, 4, &clue), "no wall yet");
+        marks[0] = BLACK; // a run of 1 of 2, still short
+        assert!(!clue_satisfied(&grid, &marks, 4, &clue));
+        marks[1] = BLACK; // a run of 2 - the numbers are met
+        assert!(clue_satisfied(&grid, &marks, 4, &clue));
+        // the neighbours that are still undecided simply have to become white
+        marks[5] = WHITE;
+        assert!(clue_satisfied(&grid, &marks, 4, &clue));
+        marks[2] = BLACK; // a third wall would break the clue
+        assert!(!clue_satisfied(&grid, &marks, 4, &clue));
+        marks[2] = WHITE;
+        assert!(clue_satisfied(&grid, &marks, 4, &clue));
+    }
+
+    #[test]
+    fn a_clue_is_read_from_any_starting_point() {
+        let grid = Grid::new(3, 3);
+        let mut cells = vec![WHITE; 9];
+        // around the centre: walls at the up-left (idx 0), up-right (idx 2), down
+        // (idx 7) and down-right (idx 8) neighbours - a 2-run and two singles
+        for i in [0usize, 2, 7, 8] {
+            cells[i] = BLACK;
+        }
+        assert_eq!(clue_of(&cells, &grid, 4), vec![2, 1, 1]);
+        // the player's walls may match any rotation of the numbers
+        for written in [vec![2u8, 1, 1], vec![1, 1, 2], vec![1, 2, 1]] {
+            assert!(
+                clue_satisfied(&grid, &cells, 4, &written),
+                "{written:?} describes the same clue"
+            );
+            let errors = validate(&grid, &cells, &[(4, written.clone())]);
+            assert!(
+                !errors.iter().any(|e| e.contains("clue")),
+                "{written:?} was rejected: {errors:?}"
+            );
+        }
+        // rotations pick out exactly the same neighbour masks
+        assert_eq!(clue_masks(&[1, 1, 2]), clue_masks(&[2, 1, 1]));
+        // a clue that is not a rotation is still a different clue
+        assert!(!clue_satisfied(&grid, &cells, 4, &vec![2u8, 2]));
+        assert!(!clue_satisfied(&grid, &cells, 4, &vec![1u8, 1, 1]));
+        assert!(!clue_satisfied(&grid, &cells, 4, &vec![4u8]));
     }
 
     #[test]

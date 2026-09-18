@@ -30,8 +30,10 @@ node tools/serve.cjs                # then open http://127.0.0.1:8080/
 Fill every cell black or white:
 
 * a cell with a number is empty; the numbers are the lengths of the black runs
-  around that cell, read **clockwise** starting anywhere (runs are separated by
-  at least one white cell);
+  around that cell (runs are separated by at least one white cell). The reading
+  order is **not** fixed - a clue is a cycle, `1 2` and `2 1` are the same clue -
+  so the digits are always shown **smallest first** and never hint at a starting
+  point;
 * all black cells form one orthogonally connected group;
 * no 2x2 block is completely black.
 
@@ -73,6 +75,9 @@ check:
 
 * **spotlight** - adding a wall highlights the whole connected wall group it
   joined (blue, gold outline). Shift-hovering does the same for any group.
+* **grey clue** - once a clue's numbers are all accounted for by the walls
+  around it (so the remaining neighbours have to be white), its digits turn
+  grey.
 * **red clue** - if the walls and empty marks around a clue can no longer form
   its numbers, the clue turns red.
 * **red walls** - a wall group that can never join the main wall group any more,

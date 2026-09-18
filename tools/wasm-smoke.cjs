@@ -56,6 +56,17 @@ check("generate ok", puzzle.ok === true && puzzle.w === 8, JSON.stringify(puzzle
 check("cells are the board size", puzzle.cells.length === 64, String(puzzle.cells.length));
 check("clues are present", puzzle.clues.length > 0, puzzle.clues);
 check("clues are sorted indices", /^\d+:\d+;/.test(puzzle.clues), puzzle.clues);
+check(
+  "clue numbers are stored smallest first",
+  puzzle.clues
+    .split(";")
+    .filter(Boolean)
+    .every((pair) => {
+      const text = pair.split(":")[1];
+      return text === [...text].sort().join("");
+    }),
+  puzzle.clues,
+);
 check("seed is echoed", puzzle.seed === 12345, String(puzzle.seed));
 check("status reports cells left", puzzle.statusKey === "cells_left", puzzle.statusKey);
 check(
@@ -70,6 +81,13 @@ check(
   "the status carries its numbers",
   Array.isArray(puzzle.statusArgs) && puzzle.statusArgs.length === 1 && puzzle.statusArgs[0] > 0,
   JSON.stringify(puzzle.statusArgs),
+);
+check(
+  "no clue is greyed out on a fresh board",
+  typeof puzzle.doneClues === "string" &&
+    puzzle.doneClues.length === puzzle.cells.length &&
+    !puzzle.doneClues.includes("1"),
+  `doneClues='${puzzle.doneClues}'`,
 );
 
 // clue cells start empty (2), everything else undecided (0)
@@ -103,6 +121,13 @@ const step = call("onestep");
 const filled = decided(step);
 check("one step fills cells", filled > 0, `${filled} decided`);
 check("one step status", /One step/.test(step.status), step.status);
+const met = [...step.doneClues].filter((c) => c === "1").length;
+check("one step meets the numbers of some clues", met > 0, `${met} greyed out`);
+check(
+  "only clue cells are greyed out",
+  [...step.doneClues].every((c, i) => c === "0" || clueIndices.has(i)),
+  step.doneClues,
+);
 
 const undo = call("undo");
 check("undo takes one back", decided(undo) === filled - 1, `${decided(undo)} vs ${filled - 1}`);
@@ -112,6 +137,7 @@ check(
   "reset clears every non clue cell",
   [...cleared.cells].every((c, i) => (clueIndices.has(i) ? c === "2" : c === "0")),
 );
+check("reset un-greys every clue", !cleared.doneClues.includes("1"), cleared.doneClues);
 
 const firstClue = [...clueIndices][0];
 const cx = firstClue % 8;
@@ -139,6 +165,11 @@ call("paint end");
 
 const shown = call("solution");
 check("solution is revealed", shown.showSolution === true && shown.solution.length === 64);
+check(
+  "the solution leaves the clue digits alone",
+  !shown.doneClues.includes("1"),
+  shown.doneClues,
+);
 const hidden = call("solution");
 check("solution hides again", hidden.showSolution === false && hidden.solution.length === 0);
 

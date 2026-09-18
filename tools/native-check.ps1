@@ -517,6 +517,39 @@ if ($script:slider -ne [IntPtr]::Zero) {
     Write-Host "       (minimum client $w5 x $h5, cell $cell5)"
 }
 
+# ---- 7. clue digits grey out once their numbers are accounted for ---------
+# A fresh board has no clue met yet; one step fills what the clues alone force,
+# which meets the numbers of many of them, so those digits turn grey.
+$wr6 = New-Object NativeCheck+RECT
+[void][NativeCheck]::GetWindowRect($script:hwnd, [ref]$wr6)
+[void][NativeCheck]::SetWindowPos($script:hwnd, [IntPtr]::Zero, 0, 0, 1000, 820, 0x0014)
+Start-Sleep -Seconds 2
+[void][NativeCheck]::PostMessageW($script:hwnd, 0x0100, [IntPtr]0x52, [IntPtr]0)   # R = clear
+Start-Sleep -Seconds 1
+
+$fresh = Grab-Client
+$shot6 = $fresh.shot
+$w6 = $fresh.w
+$lines6 = 0
+$cell6 = [NativeCheck]::DetectCell($shot6, $w6, 67, 20, $w6 - 24 - 320 - 18, [ref]$lines6)
+$right6 = 24 + $cell6 * $Size
+$bottom6 = [math]::Min($fresh.h, 62 + $cell6 * $Size)
+$grey0 = [NativeCheck]::CountColor($shot6, $w6, 24, 62, $right6, $bottom6, 143, 146, 156, 10)
+$dark0 = [NativeCheck]::CountColor($shot6, $w6, 24, 62, $right6, $bottom6, 48, 48, 40, 10)
+# A fresh board has no number met yet, so the grey ink may only grow once the
+# step meets some of the numbers. (A comparison rather than "grey is zero",
+# because another window on top of the board would be captured instead.)
+Report "the fresh clue digits are drawn dark" ($dark0 -gt 100) "$dark0 dark digit pixels"
+
+[void][NativeCheck]::PostMessageW($script:hwnd, 0x0100, [IntPtr]0x44, [IntPtr]0)   # D = one step
+Start-Sleep -Seconds 2
+$stepped = Grab-Client
+$grey1 = [NativeCheck]::CountColor($stepped.shot, $stepped.w, 24, 62, $right6, $bottom6, 143, 146, 156, 10)
+$dark1 = [NativeCheck]::CountColor($stepped.shot, $stepped.w, 24, 62, $right6, $bottom6, 48, 48, 40, 10)
+Report "clues the step met turn grey" ($grey1 -gt $grey0 + 100) "grey $grey0 -> $grey1 digit pixels"
+Report "the clues that are still open stay dark" ($dark1 -gt 0 -and $dark1 -lt $dark0) "dark $dark0 -> $dark1 digit pixels"
+Write-Host "       (cell $cell6 px, grey $grey0 -> $grey1, dark $dark0 -> $dark1)"
+
 if (-not $proc.HasExited) { $proc.Kill() }
 if ($failures -eq 0) { Write-Host "`nall native checks passed"; exit 0 }
 Write-Host "`n$failures native check(s) failed"

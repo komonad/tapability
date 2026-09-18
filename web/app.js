@@ -34,6 +34,8 @@ const C = {
   errorOutline: "#e23434",
   clueText: "#303028",
   clueBad: "#c82020",
+  // a clue whose numbers the player has already accounted for
+  clueDone: "#8f929c",
   dim: "#707f88",
 };
 
@@ -114,6 +116,8 @@ const ui = {
   state: null,
   cells: null,
   clues: new Map(),
+  /** clue cell -> 1 when its numbers are already accounted for (grey digits) */
+  doneClues: new Uint8Array(0),
   cols: 0,
   rows: 0,
   cell: 20,
@@ -199,6 +203,7 @@ function applyState(state) {
   ui.state = state;
   ui.cells = decodeDigits(state.cells);
   ui.clues = parseClues(state.clues);
+  ui.doneClues = decodeDigits(state.doneClues || "");
   if (state.w !== ui.cols || state.h !== ui.rows) {
     ui.cols = state.w;
     ui.rows = state.h;
@@ -430,7 +435,13 @@ function render() {
     const count = digits.length;
     const scale = count <= 1 ? 0.66 : count === 2 ? 0.46 : count === 3 ? 0.36 : 0.3;
     ctx.font = `600 ${Math.max(9, Math.round(cell * scale))}px "Segoe UI", system-ui, sans-serif`;
-    ctx.fillStyle = errors[idx] ? C.clueBad : C.clueText;
+    ctx.fillStyle = errors[idx]
+      ? C.clueBad
+      : ui.doneClues[idx]
+        ? C.clueDone
+        : C.clueText;
+    // at most two digits per row, every row centred: a three-number clue reads
+    // "a b" with a centred "c" below it
     const ccols = count <= 2 ? Math.max(1, count) : 2;
     const crows = Math.ceil(count / ccols);
     const cw = cell / ccols;
@@ -438,11 +449,10 @@ function render() {
     const bx = (idx % cols) * cell;
     const by = Math.floor(idx / cols) * cell;
     digits.forEach((digit, k) => {
-      ctx.fillText(
-        digit,
-        bx + (k % ccols) * cw + cw / 2,
-        by + Math.floor(k / ccols) * ch + ch / 2,
-      );
+      const row = Math.floor(k / ccols);
+      const inRow = Math.min(ccols, count - row * ccols);
+      const x0 = (cell - cw * inRow) / 2;
+      ctx.fillText(digit, bx + x0 + (k % ccols) * cw + cw / 2, by + row * ch + ch / 2);
     });
   }
 

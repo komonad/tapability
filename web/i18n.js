@@ -12,7 +12,8 @@ window.TAPA_I18N = {
     name: "简体中文",
     intro:
       "给每一格涂黑或留白。带数字的格子必须为空，数字是它周围 8 格中黑色连续段的长度" +
-      "（顺时针读，段与段之间至少隔一个白格）；所有黑格必须连成一片，且不能出现 2×2 全黑。" +
+      "（段与段之间至少隔一个白格；读的顺序不固定，所以显示时按从小到大排列，不暗示起点）；" +
+      "所有黑格必须连成一片，且不能出现 2×2 全黑。某个线索的数字都凑齐后，它会变成灰色。" +
       "每道题都保证恰好一个解。",
     "hint.mouse": "左键：墙 · 右键：空 · 再点同一个标记：清除 · 拖拽：一笔画",
     "hint.keys":
@@ -93,9 +94,10 @@ window.TAPA_I18N = {
     name: "English",
     intro:
       "Fill every cell black or white. A numbered cell stays empty, and its numbers are the " +
-      "lengths of the black runs around it, read clockwise (runs are separated by at least one " +
-      "white cell); all black cells must be connected and no 2x2 block may be all black. Every " +
-      "puzzle has exactly one solution.",
+      "lengths of the black runs around it (runs are separated by at least one white cell). The " +
+      "reading order is not fixed, so the numbers are shown smallest first and never hint at a " +
+      "starting point. All black cells must be connected and no 2x2 block may be all black. A " +
+      "clue whose numbers are all accounted for turns grey. Every puzzle has exactly one solution.",
     "hint.mouse":
       "Left click: wall · right click: empty · click the same mark again: clear · drag: paint a stroke",
     "hint.keys":

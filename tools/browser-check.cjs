@@ -141,6 +141,16 @@ async function main() {
     summary.statusKey,
   );
   check("clues are present", summary.clues > 0, String(summary.clues));
+  const clueOrder = await evaluate(`(() => {
+    let bad = 0;
+    for (const text of ui.clues.values()) {
+      const digits = [...text].map(Number);
+      if (digits.some((n) => n < 1 || n > 8)) bad += 1;
+      for (let i = 1; i < digits.length; i += 1) if (digits[i] < digits[i - 1]) bad += 1;
+    }
+    return bad;
+  })()`);
+  check("clue numbers are shown smallest first", clueOrder === 0, String(clueOrder));
   check("footer does not leak the wall count", !summary.hasWallCount, summary.info);
   check(
     "footer shows the seed and clue count",
@@ -544,20 +554,33 @@ async function main() {
 
   // a second wall group elsewhere makes the sealed one stranded
   const second = await evaluate(`(async () => {
-    let far = null;
-    for (let i = ui.cells.length - 1; i >= 0 && far === null; i -= 1) {
+    const sr = Math.floor(${sealed.i} / ui.cols);
+    const sc = ${sealed.i} % ui.cols;
+    let pick = null;
+    for (let i = ui.cells.length - 1; i >= 0 && !pick; i -= 1) {
       if (ui.clues.has(i) || ui.cells[i] !== 0) continue;
       const x = i % ui.cols, y = Math.floor(i / ui.cols);
-      if (Math.abs(x - ${sealed.i} % ui.cols) + Math.abs(y - Math.floor(${sealed.i} / ui.cols)) < 4) continue;
-      far = { i, x, y };
+      if (Math.abs(x - sc) + Math.abs(y - sr) < 4) continue;
+      // it has to sit in the open area: a wall boxed in by clue cells would be
+      // stranded on its own account, which is not what this check is about
+      let open = 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= ui.cols || ny >= ui.rows) continue;
+        const nb = ny * ui.cols + nx;
+        if (!ui.clues.has(nb) && ui.cells[nb] === 0) open += 1;
+      }
+      if (open >= 2) pick = { i, x, y, open };
     }
-    let state = await send(\`paint begin \${far.x} \${far.y} 1\`);
+    if (!pick) return { i: -1, open: 0, sealed: "0", far: "1" };
+    let state = await send(\`paint begin \${pick.x} \${pick.y} 1\`);
     state = await send("paint end");
     applyState(state);
     return {
-      i: far.i,
+      i: pick.i,
+      open: pick.open,
       sealed: state.errorsCells[${sealed.i}],
-      far: state.errorsCells[far.i],
+      far: state.errorsCells[pick.i],
     };
   })()`);
   check(
@@ -732,6 +755,137 @@ async function main() {
   await evaluate(`document.getElementById("btn-solution").click()`);
   await waitFor(`!ui.busy`, "solution hides");
   check("solution button hides it again", await evaluate(`ui.state.showSolution === false`));
+
+  // ---- clue digits grey out once their numbers are met --------------------
+  await evaluate(`document.getElementById("btn-clear").click()`);
+  await waitFor(`!ui.busy`, "clear finishes");
+  // a big cell size, so the digits are wide enough to sample
+  await evaluate(`(() => {
+    const slider = document.getElementById("zoom-slider");
+    slider.value = "64";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  await sleep(150);
+
+  /** Grey / dark digit pixels inside one cell of the canvas. */
+  const clueInk = (index) => `(() => {
+    const canvas = document.getElementById("board");
+    const ctx = canvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    const idx = ${index};
+    const x = (idx % ui.cols) * ui.cell;
+    const y = Math.floor(idx / ui.cols) * ui.cell;
+    const d = ctx.getImageData(
+      Math.round(x * dpr),
+      Math.round(y * dpr),
+      Math.round(ui.cell * dpr),
+      Math.round(ui.cell * dpr),
+    ).data;
+    let grey = 0;
+    let dark = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (Math.abs(d[i] - 143) < 12 && Math.abs(d[i + 1] - 146) < 12 && Math.abs(d[i + 2] - 156) < 12) grey += 1;
+      if (Math.abs(d[i] - 48) < 12 && Math.abs(d[i + 1] - 48) < 12 && Math.abs(d[i + 2] - 40) < 12) dark += 1;
+    }
+    return { grey, dark };
+  })()`;
+
+  // the clue with the fewest walls around it in the solution, so the check has
+  // as few cells to paint as possible
+  const met = await evaluate(`(async () => {
+    const revealed = await send("solution");
+    const solution = Array.from(decodeDigits(revealed.solution));
+    await send("solution");
+    let best = { idx: -1, walls: [] };
+    for (const idx of ui.clues.keys()) {
+      const x = idx % ui.cols;
+      const y = Math.floor(idx / ui.cols);
+      const walls = [];
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= ui.cols || ny >= ui.rows) continue;
+          const nb = ny * ui.cols + nx;
+          if (solution[nb] === 1) walls.push(nb);
+        }
+      }
+      if (walls.length && (best.idx < 0 || walls.length < best.walls.length)) best = { idx, walls };
+    }
+    return best;
+  })()`);
+  check("a clue with walls around it was found", met.idx >= 0, JSON.stringify(met));
+
+  const inkBefore = await evaluate(clueInk(met.idx));
+  await evaluate(`(async () => {
+    for (const nb of ${JSON.stringify(met.walls)}) {
+      await run("paint begin " + (nb % ui.cols) + " " + Math.floor(nb / ui.cols) + " 1");
+      await run("paint end");
+    }
+  })()`);
+  await sleep(150);
+  const inkAfter = await evaluate(clueInk(met.idx));
+  check("the engine calls that clue met", (await evaluate(`ui.doneClues[${met.idx}]`)) === 1);
+  check(
+    "a clue whose numbers are met turns grey",
+    inkBefore.dark > 0 && inkBefore.grey === 0 && inkAfter.grey > 0 && inkAfter.dark === 0,
+    `${JSON.stringify(inkBefore)} -> ${JSON.stringify(inkAfter)}`,
+  );
+  const stillOpen = await evaluate(`(() => {
+    let open = 0;
+    for (const idx of ui.clues.keys()) if (!ui.doneClues[idx]) open += 1;
+    return open;
+  })()`);
+  check("clues that are still open stay dark", stillOpen > 0, String(stillOpen));
+
+  // ---- a three-number clue centres the digit underneath -------------------
+  const threeDigit = await evaluate(`(async () => {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      for (const [idx, text] of ui.clues) if (text.length === 3) return idx;
+      document.getElementById("btn-new").click();
+      for (let i = 0; i < 300 && ui.busy; i += 1) await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    return -1;
+  })()`);
+  if (threeDigit >= 0) {
+    const lower = await evaluate(`(() => {
+      const canvas = document.getElementById("board");
+      const ctx = canvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+      const idx = ${threeDigit};
+      const whole = Math.round(ui.cell * dpr);
+      const pad = Math.round(3 * dpr);
+      const x0 = Math.round((idx % ui.cols) * ui.cell * dpr) + pad;
+      const y0 = Math.round(Math.floor(idx / ui.cols) * ui.cell * dpr) + Math.round(whole / 2) + pad;
+      const w = whole - 2 * pad;
+      const h = whole - Math.round(whole / 2) - 2 * pad;
+      const d = ctx.getImageData(x0, y0, w, h).data;
+      let minX = w;
+      let maxX = -1;
+      for (let py = 0; py < h; py += 1) {
+        for (let px = 0; px < w; px += 1) {
+          const i = (py * w + px) * 4;
+          if (d[i] < 200 && d[i + 2] < 200) { if (px < minX) minX = px; if (px > maxX) maxX = px; }
+        }
+      }
+      return { w, h, minX, maxX };
+    })()`);
+    const offset = lower.maxX < 0 ? Number.POSITIVE_INFINITY : Math.abs((lower.minX + lower.maxX) / 2 - lower.w / 2);
+    check(
+      "a three-number clue centres the digit below",
+      lower.maxX >= 0 && offset <= lower.w * 0.12,
+      JSON.stringify(lower),
+    );
+  } else {
+    console.log("  skip a three-number clue centres the digit below (no such clue in six puzzles)");
+  }
+  await evaluate(`document.getElementById("btn-clear").click()`);
+  await waitFor(`!ui.busy`, "clear finishes");
+  // back to the fitted cell size the later checks expect
+  await evaluate(`document.getElementById("btn-fit").click()`);
+  await sleep(150);
 
   // ---- shift-hover spotlight ---------------------------------------------
   // use a cell that is still undecided, so one click definitely makes a wall

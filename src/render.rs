@@ -10,7 +10,7 @@ use winapi::shared::windef::{COLORREF, HBRUSH, HDC, HFONT, HGDIOBJ, HPEN, HWND, 
 use winapi::um::wingdi::*;
 use winapi::um::winuser::*;
 
-use tapa_core::model::{Puzzle, BLACK, WHITE};
+use tapa_core::model::{clue_satisfied, Puzzle, BLACK, WHITE};
 use crate::window::{App, StatusKind};
 
 pub const MARGIN: i32 = 24;
@@ -51,6 +51,8 @@ const C_TEXT: COLORREF = 0x0030_3028; // dark slate
 const C_DIM: COLORREF = 0x0088_8070;
 const C_GOOD: COLORREF = 0x0030_8A20;
 const C_BAD: COLORREF = 0x0020_20C8;
+/// Digits of a clue whose numbers the player has already accounted for.
+const C_DONE: COLORREF = 0x009c_928f; // grey 143/146/156
 
 fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
     RECT {
@@ -438,6 +440,11 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
                     let r = rect(px, py, px + g.cell, py + g.cell);
                     let color = if app.errors.clues.get(idx).copied().unwrap_or(false) {
                         C_BAD
+                    } else if !app.show_solution
+                        && clue_satisfied(&puzzle.grid, &app.cells, idx, clue)
+                    {
+                        // the numbers are all accounted for: grey them out
+                        C_DONE
                     } else {
                         C_TEXT
                     };
@@ -663,18 +670,15 @@ unsafe fn draw_clue(hdc: HDC, g: &Gfx, clue: &[u8], r: RECT, color: COLORREF) {
         3 => g.font_clue[2],
         _ => g.font_clue[3],
     };
-    let cols = if count <= 2 { count.max(1) } else { 2 };
-    let rows = (count + cols - 1) / cols;
-    let cw = (r.right - r.left) / cols as i32;
-    let ch = (r.bottom - r.top) / rows as i32;
-    for (k, value) in clue.iter().enumerate() {
-        let cx = k % cols;
-        let cy = k / cols;
+    for (slot, value) in clue_slots(count, r.right - r.left, r.bottom - r.top)
+        .into_iter()
+        .zip(clue.iter())
+    {
         let cell = rect(
-            r.left + cx as i32 * cw,
-            r.top + cy as i32 * ch,
-            r.left + (cx as i32 + 1) * cw,
-            r.top + (cy as i32 + 1) * ch,
+            r.left + slot.left,
+            r.top + slot.top,
+            r.left + slot.right,
+            r.top + slot.bottom,
         );
         let s = ((b'0' + value) as char).to_string();
         text(
@@ -686,6 +690,33 @@ unsafe fn draw_clue(hdc: HDC, g: &Gfx, clue: &[u8], r: RECT, color: COLORREF) {
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
         );
     }
+}
+
+/// Where the digits of a clue sit inside its `w` x `h` cell: at most two per
+/// row, in reading order, with every row centred. Three numbers therefore read
+/// `a b` with a centred `c` below, instead of `c` stuck under the left digit.
+/// The numbers themselves have no fixed order - a clue is read clockwise from
+/// any starting point - so the layout only has to look balanced.
+fn clue_slots(count: usize, w: i32, h: i32) -> Vec<RECT> {
+    let cols = if count <= 2 { count.max(1) } else { 2 };
+    let rows = (count + cols - 1) / cols;
+    let cw = w / cols as i32;
+    let ch = h / rows.max(1) as i32;
+    let mut slots = Vec::with_capacity(count);
+    for row in 0..rows {
+        let first = row * cols;
+        let in_row = count.min(first + cols) - first;
+        let x0 = (w - cw * in_row as i32) / 2;
+        for k in 0..in_row {
+            slots.push(rect(
+                x0 + k as i32 * cw,
+                row as i32 * ch,
+                x0 + (k as i32 + 1) * cw,
+                (row as i32 + 1) * ch,
+            ));
+        }
+    }
+    slots
 }
 
 #[cfg(test)]
@@ -736,6 +767,55 @@ mod tests {
         assert_eq!(min_client_h(3), PANEL_MIN_H);
         assert_eq!(min_client_h(60), HEADER + 60 * MIN_CELL + FOOTER);
         assert!(min_client_h(60) > PANEL_MIN_H);
+    }
+
+    #[test]
+    fn a_three_number_clue_centres_its_lower_number() {
+        let (w, h) = (40, 40);
+        let slots = clue_slots(3, w, h);
+        assert_eq!(slots.len(), 3);
+        // the top row holds two numbers at the quarter and three-quarter mark
+        assert_eq!(slots[0].left, 0);
+        assert_eq!(slots[0].top, 0);
+        assert_eq!(slots[1].left, 20);
+        assert_eq!(slots[1].top, 0);
+        // the single number below sits in the middle of the cell
+        assert_eq!(slots[2].left, 10);
+        assert_eq!(slots[2].right, 30);
+        assert_eq!(slots[2].top, 20);
+        // an odd cell width stays inside the cell and keeps the row centred
+        let odd = clue_slots(3, 41, 41);
+        assert_eq!(odd[2].left, 10);
+        assert_eq!(odd[2].right, 30);
+        assert!(odd[2].right <= 41);
+    }
+
+    #[test]
+    fn clue_digits_never_leave_their_cell() {
+        for count in 1..=4usize {
+            for cell in [11i32, 17, 38, 96] {
+                let slots = clue_slots(count, cell, cell);
+                assert_eq!(slots.len(), count);
+                for slot in slots {
+                    assert!(slot.left >= 0 && slot.top >= 0);
+                    assert!(slot.right <= cell && slot.bottom <= cell);
+                    assert!(slot.right > slot.left && slot.bottom > slot.top);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn one_and_two_number_clues_keep_their_own_rows() {
+        assert_eq!(clue_slots(1, 40, 40)[0].left, 0);
+        assert_eq!(clue_slots(1, 40, 40)[0].right, 40);
+        let two = clue_slots(2, 40, 40);
+        assert_eq!((two[0].left, two[1].left), (0, 20));
+        assert_eq!(two[0].top, 0);
+        assert_eq!(two[0].bottom, 40);
+        let four = clue_slots(4, 40, 40);
+        assert_eq!((four[0].left, four[1].left, four[2].left), (0, 20, 0));
+        assert_eq!((four[2].top, four[3].top), (20, 20));
     }
 }
 
