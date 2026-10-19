@@ -302,7 +302,7 @@ impl App {
         self.status_kind = StatusKind::Good;
     }
 
-    /// Fill in everything the clues alone force, given the current marks.
+    /// Fill in everything the structural and clue rules force, given the current marks.
     /// The deductions go in as normal marks, so Z undoes them like any other.
     pub fn one_step(&mut self) {
         if self.generating || self.show_solution {
@@ -312,16 +312,16 @@ impl App {
             let Some(puzzle) = self.puzzle.as_ref() else {
                 return;
             };
-            tapa_core::model::clue_deductions(&puzzle.grid, &self.cells, &puzzle.clues)
+            tapa_core::model::one_step_deductions(&puzzle.grid, &self.cells, &puzzle.clues)
         };
         if deduced.is_empty() {
-            self.status = "One step: the clues force nothing new right now.".to_string();
+            self.status = "One step: the rules force nothing new right now.".to_string();
             self.status_kind = StatusKind::Info;
             return;
         }
         let applied = self.apply_marks(deduced);
         self.status = format!(
-            "One step: filled {applied} cell{} the clues force.",
+            "One step: filled {applied} cell{} the rules force.",
             if applied == 1 { "" } else { "s" }
         );
         self.status_kind = StatusKind::Good;

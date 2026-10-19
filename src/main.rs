@@ -37,7 +37,7 @@ fn usage() {
          \x20 --density LO-HI          fraction of black cells, e.g. 0.40-0.50\n\
          \n\
          settings (all optional):\n\
-         \x20 size, seed, density, max_clueless_fraction,\n\
+         \x20 size, difficulty, seed, density, max_clueless_fraction,\n\
          \x20 per_check_ms, per_check_nodes, total_nodes,\n\
          \x20 shape_check_ms, shape_check_nodes, max_attempts\n\
          \n\

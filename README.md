@@ -47,7 +47,7 @@ Fill every cell black or white:
 | click the same mark again | clear the cell |
 | left click on a white cell | switches it to wall, and vice versa |
 | Z | undo (hold to repeat; one stroke = one entry per cell) |
-| D | one step: fill in everything the clues alone force |
+| D | one step: apply clue, 2x2 and connection deductions |
 | middle click a clue | step just that one clue, without cascading |
 | Alt + left click a clue | the same, for mice and trackpads without a middle button |
 | drag the size slider | pick a board size; the puzzle is rebuilt when you release it |
@@ -100,12 +100,11 @@ The status bar adds `red = rule broken` whenever something is flagged.
 
 There are two granularities. **Middle-clicking a clue cell** applies the rule to
 that single clue once - no cascading - which is handy for poking at one number.
-The **One step (D)** button applies only the rule *"the black runs around a clue
-must match its numbers"* to the cells around each clue, to a fixpoint, and marks
-everything that follows from it. It never uses search or the connectivity rule,
-so it is always sound: every cell it fills is forced. On a dense 20x20 board
-this typically fills 100-250 cells; press it again and it usually finds nothing
-new, because the first press already reached the fixpoint.
+The **One step (D)** button first marks the remaining cell of every 2x2
+with three black cells as white. It then fills unknown connection cells whose
+removal would separate existing black cells, and applies the clue rule. These
+rules repeat to a fixpoint. All deductions are undoable together. A single black
+component does not force an exit unless another black component needs it.
 
 ## Controls and settings in the UI
 
@@ -122,13 +121,17 @@ file uses, saves it, and starts a new puzzle; changing the board size re-fits
 the grid in the current window (and grows the window if the new board would not
 fit). **Defaults** refills the fields.
 
-The board size has a **slider** under its field: dragging it updates the number
-live and rebuilds the puzzle when you let go, so you can sweep through sizes
-without typing. The browser build has the same slider next to the size field.
+Sliders update their numeric fields while dragging. **Apply & new puzzle**
+commits the generation settings. The browser includes sliders for size,
+difficulty effort, density bounds, clueless fraction and search budgets; the
+desktop panel includes size, difficulty effort, clueless fraction, budget slack
+and attempts. Numeric fields remain available for exact values. The separate
+cell-size slider zooms the board immediately without generating a puzzle.
 
 | setting | default | meaning |
 |---|---|---|
 | `size` | 20 | board is `size x size` (3..60) |
+| `difficulty` | 3 | compare 1..5 clue-removal orders, preferring more unresolved cells after deterministic deductions |
 | `seed` | clock | fixed seed; makes generation reproducible |
 | `density` | `0.50-0.60` | fraction of black cells, picked randomly in this range |
 | `max_clueless_fraction` | 0.15 | reject shapes whose biggest clue-free patch exceeds this fraction of the board |
@@ -183,6 +186,10 @@ offline: `tapa-wasm` exports a scratch buffer for the command text plus a JSON
 reply buffer, and `web/worker.js` copies commands in and parses replies out. The
 only requirement is the `wasm32-unknown-unknown` standard library, which
 `build-web.ps1` adds if it is missing.
+
+The browser layout places rules and contextual help on the left, the centered
+board in the middle, and controls on the right. On narrow screens, the guide and
+controls wrap below the board.
 
 The page is translated: Simplified Chinese by default, English one click away in
 the header, and the choice is remembered. The engine never sends prose for the
@@ -327,7 +334,10 @@ solution *found and proven* (not "aborted by budget") means unique.
    clue, except cells whose clue would be 8. If this set does not already have a
    unique solution, the shape is unusable (subsets are only weaker) and a new
    shape is grown.
-3. **minimise to a minimal clue set**: walk the candidates in random order and
+3. **compare clue-removal orders**: run up to `difficulty` independent removal
+   orders within the shared budget. Prefer the result with more unresolved cells
+   after deterministic deductions, breaking ties by fewer clues. Each order
+   **minimises to a minimal clue set**: walk the candidates in random order and
    drop a clue whenever the puzzle still has exactly one solution. Every kept
    clue was tested against a superset of the final set, so the result is
    *inclusion-minimal*: no single clue of it can be removed any more.
@@ -380,8 +390,9 @@ denser default is both prettier and faster.
   greedy removal guarantees; it is not proven to be the smallest possible clue
   set for that solution. When the budget runs out, a removable clue can also
   survive. The unit tests check strict minimality with the budgets disabled.
-* One step only uses the clue rule, so it can leave cells that the connectivity
-  or 2x2 rules would force.
+* Difficulty effort ranks candidates by unresolved cells after deterministic rules;
+  it is a heuristic, not a human difficulty grade. Higher effort compares more
+  candidates within the same generation budget.
 * The solver has no clause learning or restarts; hard instances are bounded by
   the shared budget rather than solved quickly.
 * The desktop build is Windows only (Win32 + GDI). The engine and the browser

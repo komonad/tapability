@@ -30,9 +30,8 @@ use tapa_core::clock::Timer;
 use tapa_core::config::Settings;
 use tapa_core::generator::{generate_with, GenConfig};
 use tapa_core::model::{
-    clue_deductions, clue_satisfiable, clue_satisfied, clue_step, clue_text, line_cells,
-    live_errors, validate,
-    LiveErrors, Puzzle, BLACK, UNKNOWN, WHITE,
+    clue_satisfiable, clue_satisfied, clue_step, clue_text, line_cells, live_errors,
+    one_step_deductions, validate, LiveErrors, Puzzle, BLACK, UNKNOWN, WHITE,
 };
 use tapa_core::rng::Rng;
 use tapa_core::report;
@@ -389,7 +388,7 @@ impl Engine {
         );
     }
 
-    /// Fill in everything the clues alone force, given the current marks.
+    /// Fill in everything the structural and clue rules force, given the current marks.
     fn one_step(&mut self) {
         if self.show_solution {
             return;
@@ -398,14 +397,14 @@ impl Engine {
             let Some(puzzle) = self.puzzle.as_ref() else {
                 return;
             };
-            clue_deductions(&puzzle.grid, &self.cells, &puzzle.clues)
+            one_step_deductions(&puzzle.grid, &self.cells, &puzzle.clues)
         };
         if deduced.is_empty() {
             self.set_status(
                 Kind::Info,
                 "one_step_none",
                 &[],
-                "One step: the clues force nothing new right now.".to_string(),
+                "One step: the rules force nothing new right now.".to_string(),
             );
             return;
         }
@@ -415,7 +414,7 @@ impl Engine {
             "one_step_filled",
             &[applied as i64],
             format!(
-                "One step: filled {applied} cell{} the clues force.",
+                "One step: filled {applied} cell{} the rules force.",
                 if applied == 1 { "" } else { "s" }
             ),
         );

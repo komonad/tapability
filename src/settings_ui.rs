@@ -30,7 +30,7 @@ pub const ID_DEFAULTS: i32 = 8;
 pub const ID_ONE_STEP: i32 = 9;
 const ID_EDIT_BASE: i32 = 100;
 
-const ROW_H: i32 = 28;
+const ROW_H: i32 = 25;
 const BTN_H: i32 = 30;
 const LABEL_W: i32 = 132;
 const EDIT_W: i32 = 150;
@@ -57,6 +57,7 @@ const SLIDER_HELP: &str = "How many pixels one board cell is drawn at. Dragging 
 
 pub struct Controls {
     pub edits: Vec<HWND>,
+    pub setting_sliders: Vec<(usize, HWND, f64)>,
     pub buttons: Vec<HWND>,
     pub labels: Vec<HWND>,
     pub message: HWND,
@@ -215,7 +216,8 @@ pub unsafe fn create(app: &mut App) {
 
     // --- settings fields -------------------------------------------------
     let mut edits = Vec::with_capacity(FIELDS.len());
-    for (index, (_, label, _)) in FIELDS.iter().enumerate() {
+    let mut setting_sliders = Vec::new();
+    for (index, (key, label, _)) in FIELDS.iter().enumerate() {
         let top = field_top(index);
         let label_hwnd = make_label(app, label, x, top + 3, LABEL_W, hinstance);
         labels.push(label_hwnd);
@@ -235,6 +237,33 @@ pub unsafe fn create(app: &mut App) {
         );
         SendMessageW(edit, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
         edits.push(edit);
+        let spec = match *key {
+            "size" => Some((3, 60, 1.0)),
+            "difficulty" => Some((1, 5, 1.0)),
+            "max_clueless_fraction" => Some((0, 100, 100.0)),
+            "check_slack" => Some((1, 10, 1.0)),
+            "max_attempts" => Some((1, 1000, 1.0)),
+            _ => None,
+        };
+        if let Some((lo, hi, scale)) = spec {
+            SetWindowPos(
+                edit,
+                ptr::null_mut(),
+                x + LABEL_W + 8,
+                top,
+                50,
+                24,
+                SWP_NOZORDER,
+            );
+            let track = make_slider(app, x + LABEL_W + 60, top, EDIT_W - 52, hinstance);
+            SendMessageW(
+                track,
+                TBM_SETRANGE,
+                1,
+                winapi::shared::minwindef::MAKELONG(lo, hi) as LPARAM,
+            );
+            setting_sliders.push((index, track, scale));
+        }
     }
     // the cell-size slider sits in its own row, right under the board size
     let slider_label = make_label(app, "Cell size (px)", x, slider_top() + 3, LABEL_W, hinstance);
@@ -314,6 +343,7 @@ pub unsafe fn create(app: &mut App) {
 
     app.controls = Some(Controls {
         edits,
+        setting_sliders,
         buttons,
         labels,
         message,
@@ -340,7 +370,13 @@ pub unsafe fn hover_help(app: &App, screen_x: i32, screen_y: i32) {
     for (index, (_, _, help)) in FIELDS.iter().enumerate() {
         let label = controls.labels.get(1 + index);
         let edit = controls.edits.get(index);
-        if label.map_or(false, |h| over(*h)) || edit.map_or(false, |h| over(*h)) {
+        if label.map_or(false, |h| over(*h))
+            || edit.map_or(false, |h| over(*h))
+            || controls
+                .setting_sliders
+                .iter()
+                .any(|(i, hwnd, _)| *i == index && over(*hwnd))
+        {
             set_text(controls.help, help);
             return;
         }
@@ -362,6 +398,14 @@ pub unsafe fn fill_values(app: &App) {
             set_text(*edit, &app.settings.value_of(key));
         }
     }
+    for &(index, track, scale) in &controls.setting_sliders {
+        let value = app
+            .settings
+            .value_of(FIELDS[index].0)
+            .parse::<f64>()
+            .unwrap_or(0.0);
+        SendMessageW(track, TBM_SETPOS, 1, (value * scale).round() as LPARAM);
+    }
     sync_slider(app);
 }
 
@@ -379,6 +423,21 @@ pub unsafe fn handle_hscroll(app: &mut App, code: i32, lparam: LPARAM) {
     let Some(controls) = app.controls.as_ref() else {
         return;
     };
+    if let Some(&(index, track, scale)) = controls
+        .setting_sliders
+        .iter()
+        .find(|(_, hwnd, _)| *hwnd == lparam as HWND)
+    {
+        let value = SendMessageW(track, TBM_GETPOS, 0, 0) as f64 / scale;
+        let text = if scale == 1.0 {
+            format!("{value:.0}")
+        } else {
+            format!("{value:.2}")
+        };
+        set_text(controls.edits[index], &text);
+        set_text(controls.help, FIELDS[index].2);
+        return;
+    }
     if lparam as HWND != controls.slider {
         return;
     }
@@ -435,8 +494,22 @@ pub unsafe fn relayout(app: &App) {
             set(*label, x, top + 3, LABEL_W, 20);
         }
         if let Some(edit) = controls.edits.get(index) {
-            set(*edit, x + LABEL_W + 8, top, EDIT_W, 24);
+            let width = if controls.setting_sliders.iter().any(|(i, _, _)| *i == index) {
+                50
+            } else {
+                EDIT_W
+            };
+            set(*edit, x + LABEL_W + 8, top, width, 24);
         }
+    }
+    for &(index, track, _) in &controls.setting_sliders {
+        set(
+            track,
+            x + LABEL_W + 60,
+            field_top(index),
+            EDIT_W - 52,
+            SLIDER_H,
+        );
     }
     set(controls.slider_label, x, slider_top() + 3, LABEL_W, 20);
     set(
@@ -550,6 +623,13 @@ unsafe fn defaults(app: &mut App) {
         if let Some(edit) = controls.edits.get(index) {
             set_text(*edit, &defaults.value_of(key));
         }
+    }
+    for &(index, track, scale) in &controls.setting_sliders {
+        let value = defaults
+            .value_of(FIELDS[index].0)
+            .parse::<f64>()
+            .unwrap_or(0.0);
+        SendMessageW(track, TBM_SETPOS, 1, (value * scale).round() as LPARAM);
     }
     SendMessageW(controls.slider_label, WM_SETFONT, app.gfx.ui_font() as WPARAM, 1);
     set_text(controls.message, "defaults filled in - press Apply");

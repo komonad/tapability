@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 pub struct Settings {
     /// Board is `size x size`.
     pub size: usize,
+    /// Number of clue-removal orders compared for logical difficulty.
+    pub difficulty: usize,
     /// `None` means "pick a seed from the clock".
     pub seed: Option<u64>,
     /// Fraction of cells that become black, as a range.
@@ -36,6 +38,7 @@ impl Default for Settings {
     fn default() -> Settings {
         Settings {
             size: 20,
+            difficulty: 3,
             seed: None,
             // Denser boards are both prettier (less empty space) and much faster
             // to prove unique: at 0.50-0.60 a 20x20 generates in tens of
@@ -79,6 +82,10 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
         "size",
         "Board size (3-60)",
         "Board is size x size cells. Changing it rebuilds the layout and starts a new puzzle.",
+    ),
+    (
+        "difficulty", "Difficulty effort (1-5)",
+        "Compare this many clue-removal orders; prefer puzzles with more cells left after basic deductions. Budgets still apply.",
     ),
     (
         "density",
@@ -136,6 +143,15 @@ impl Settings {
                 }
                 self.size = n;
             }
+            "difficulty" => {
+                let n = number(value, key)?;
+                if !n.is_finite() || n.fract() != 0.0 || !(1.0..=5.0).contains(&n) {
+                    return Err(ConfigError(
+                        "difficulty: expected an integer from 1 to 5".into(),
+                    ));
+                }
+                self.difficulty = n as usize;
+            }
             "seed" => {
                 if value.is_empty() {
                     self.seed = None;
@@ -188,6 +204,7 @@ impl Settings {
     pub fn value_of(&self, key: &str) -> String {
         match key {
             "size" => self.size.to_string(),
+            "difficulty" => self.difficulty.to_string(),
             "density" => format!("{:.2}-{:.2}", self.density_lo, self.density_hi),
             "max_clueless_fraction" => format!("{:.2}", self.max_clueless_fraction),
             "node_budget" => self.node_budget.to_string(),
@@ -204,6 +221,7 @@ impl Settings {
     pub fn to_text(&self) -> String {
         let mut out = String::from("# written by the tapa settings panel\n");
         out.push_str(&format!("size = {}\n", self.size));
+        out.push_str(&format!("difficulty = {}\n", self.difficulty));
         if let Some(seed) = self.seed {
             out.push_str(&format!("seed = {seed}\n"));
         }
@@ -331,6 +349,7 @@ impl Settings {
 pub const EXAMPLE: &str = "\
 # Tapa generation settings. Every line is optional.
 #   size                  board is size x size (3..60)
+#   difficulty            clue-removal orders compared for difficulty (1..5)
 #   seed                  fixed seed; omit for a clock-based seed
 #   density               fraction of black cells, LO-HI
 #   max_clueless_fraction reject shapes whose biggest clue-free patch is a
@@ -346,6 +365,7 @@ pub const EXAMPLE: &str = "\
 # In the game: press F2 to open the settings panel; changes are remembered.
 
 size = 20
+difficulty = 3
 density = 0.50-0.60
 max_clueless_fraction = 0.15
 node_budget = 150000
@@ -358,6 +378,17 @@ max_attempts = 200
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn difficulty_is_bounded_and_persisted() {
+        let mut settings = Settings::default();
+        for bad in ["0", "6", "2.5", "NaN", "inf"] {
+            assert!(settings.set("difficulty", bad).is_err());
+        }
+        settings.set("difficulty", "5").unwrap();
+        assert_eq!(settings.value_of("difficulty"), "5");
+        assert!(settings.to_text().contains("difficulty = 5"));
+    }
 
     #[test]
     fn parses_values() {
