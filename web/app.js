@@ -520,7 +520,8 @@ function render() {
     const ccols = count <= 2 ? Math.max(1, count) : 2;
     const crows = Math.ceil(count / ccols);
     const cw = cell / ccols;
-    const ch = cell / crows;
+    const ch = count === 3 ? cell * 0.4 : cell / crows;
+    const y0 = (cell - ch * crows) / 2;
     const bx = (idx % cols) * cell;
     const by = Math.floor(idx / cols) * cell;
     digits.forEach((digit, k) => {
@@ -529,7 +530,7 @@ function render() {
       const x0 = (cell - cw * inRow) / 2;
       const bounds = ctx.measureText(digit);
       const cx = bx + x0 + (k % ccols) * cw + cw / 2;
-      const cy = by + row * ch + ch / 2;
+      const cy = by + y0 + row * ch + ch / 2;
       ctx.fillText(
         digit,
         cx + (bounds.actualBoundingBoxLeft - bounds.actualBoundingBoxRight) / 2,

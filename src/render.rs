@@ -770,7 +770,12 @@ fn clue_slots(count: usize, w: i32, h: i32) -> Vec<RECT> {
     let cols = if count <= 2 { count.max(1) } else { 2 };
     let rows = (count + cols - 1) / cols;
     let cw = w / cols as i32;
-    let ch = h / rows.max(1) as i32;
+    let ch = if count == 3 {
+        h * 2 / 5
+    } else {
+        h / rows.max(1) as i32
+    };
+    let y0 = (h - ch * rows as i32) / 2;
     let mut slots = Vec::with_capacity(count);
     for row in 0..rows {
         let first = row * cols;
@@ -779,9 +784,9 @@ fn clue_slots(count: usize, w: i32, h: i32) -> Vec<RECT> {
         for k in 0..in_row {
             slots.push(rect(
                 x0 + k as i32 * cw,
-                row as i32 * ch,
+                y0 + row as i32 * ch,
                 x0 + (k as i32 + 1) * cw,
-                (row as i32 + 1) * ch,
+                y0 + (row as i32 + 1) * ch,
             ));
         }
     }
@@ -845,13 +850,15 @@ mod tests {
         assert_eq!(slots.len(), 3);
         // the top row holds two numbers at the quarter and three-quarter mark
         assert_eq!(slots[0].left, 0);
-        assert_eq!(slots[0].top, 0);
+        assert_eq!(slots[0].top, 4);
+        assert_eq!(slots[0].bottom, 20);
         assert_eq!(slots[1].left, 20);
-        assert_eq!(slots[1].top, 0);
+        assert_eq!(slots[1].top, 4);
         // the single number below sits in the middle of the cell
         assert_eq!(slots[2].left, 10);
         assert_eq!(slots[2].right, 30);
         assert_eq!(slots[2].top, 20);
+        assert_eq!(slots[2].bottom, 36);
         // an odd cell width stays inside the cell and keeps the row centred
         let odd = clue_slots(3, 41, 41);
         assert_eq!(odd[2].left, 10);
