@@ -48,16 +48,16 @@ body {
 .app {
   display: flex;
   align-items: stretch;
-  gap: 18px;
-  padding: 18px;
+  gap: 12px;
+  padding: 12px;
   height: 100%;
 }
 
 .board-area {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   min-width: 0;
+  min-height: 0;
   flex: 1 1 auto;
   -webkit-user-select: none;
   user-select: none;
@@ -74,11 +74,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
 h1 {
   margin: 0;
+  color: var(--text);
   font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -150,7 +152,7 @@ canvas:focus-visible {
   box-shadow: 0 0 0 3px rgba(58, 130, 226, 0.35);
 }
 
-.footer {
+.puzzle-info {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -176,7 +178,7 @@ canvas:focus-visible {
 /* ---- control column ---------------------------------------------------- */
 
 .panel {
-  flex: 0 0 320px;
+  flex: 0 0 280px;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -184,10 +186,10 @@ canvas:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: calc(100vh - 36px);
+  max-height: calc(100vh - 24px);
   overflow-y: auto;
   position: sticky;
-  top: 18px;
+  top: 12px;
 }
 
 .panel-title {
@@ -390,9 +392,12 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-height: 0;
   overflow-y: auto;
   color: var(--dim);
 }
+.guide > * { flex-shrink: 0; }
+.reasoning-buttons { grid-template-columns: 1fr; }
 .guide .help { margin-top: auto; }
 @media (max-width: 1100px) {
   .guide { flex-basis: 150px; }

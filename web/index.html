@@ -15,7 +15,26 @@
   <body>
     <div class="app">
       <aside class="guide">
-        <h2 class="panel-title" data-i18n="guide.rules">规则与操作</h2>
+        <header class="header">
+          <div class="title-row">
+            <h1 id="title">Tapa</h1>
+            <label class="lang">
+              <select id="lang" aria-label="Language"></select>
+            </label>
+          </div>
+          <p id="status" class="status"></p>
+        </header>
+        <div class="puzzle-info">
+          <p id="info" class="info"></p>
+          <p id="stats" class="stats"></p>
+          <p id="quality" class="hint"></p>
+        </div>
+        <div class="buttons reasoning-buttons">
+          <button id="btn-onestep" type="button">
+            <span data-i18n="btn.onestep">单步推理</span><kbd>D</kbd>
+          </button>
+          <button id="btn-hint" type="button"><span data-i18n="btn.hint">提示</span><kbd>H</kbd></button>
+        </div>
         <section id="hint-card" class="hint-card" hidden aria-labelledby="hint-title" aria-live="polite">
           <h2 id="hint-title" class="panel-title"></h2>
           <p id="hint-explanation"></p>
@@ -27,6 +46,7 @@
             <button id="btn-hint-dismiss" type="button" data-i18n="hint.dismiss">收起</button>
           </div>
         </section>
+        <h2 class="panel-title" data-i18n="guide.rules">规则与操作</h2>
         <!-- Every translatable element carries its default (Chinese) text, so
              the page still reads correctly if the scripts are stale or blocked. -->
         <p id="intro" class="intro" data-i18n="intro">
@@ -47,28 +67,12 @@
         <p class="hint" data-i18n="batch.help">
           批量工具可打印谜题或测试生成速度，运行期间页面仍可响应操作。
         </p>
-        <p id="quality" class="hint"></p>
         <p id="help" class="help"></p>
       </aside>
       <main class="board-area">
-        <header class="header">
-          <div class="title-row">
-            <h1 id="title">Tapa</h1>
-            <label class="lang">
-              <select id="lang" aria-label="Language"></select>
-            </label>
-          </div>
-          <p id="status" class="status"></p>
-        </header>
-
         <div id="stage" class="stage">
           <canvas id="board" width="10" height="10" tabindex="0"></canvas>
         </div>
-
-        <footer class="footer">
-          <p id="info" class="info"></p>
-          <p id="stats" class="stats"></p>
-        </footer>
       </main>
 
       <aside class="panel">
@@ -89,10 +93,6 @@
           <button id="btn-solution" type="button">
             <span data-i18n="btn.solution">显示解答</span><kbd>S</kbd>
           </button>
-          <button id="btn-onestep" type="button">
-            <span data-i18n="btn.onestep">单步推理</span><kbd>D</kbd>
-          </button>
-          <button id="btn-hint" type="button"><span data-i18n="btn.hint">提示</span><kbd>H</kbd></button>
           <button id="btn-cluestep" type="button">
             <span data-i18n="btn.cluestep">推这一个线索</span>
           </button>

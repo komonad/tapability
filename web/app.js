@@ -404,8 +404,8 @@ function parseClues(text) {
 function layout() {
   const cols = ui.cols || 20;
   const rows = ui.rows || 20;
-  const availW = Math.max(220, els.stage.clientWidth || window.innerWidth - 380);
-  const availH = Math.max(200, els.stage.clientHeight || window.innerHeight - 140);
+  const availW = Math.max(1, els.stage.clientWidth);
+  const availH = Math.max(1, els.stage.clientHeight);
   const fitted = Math.max(
     MIN_CELL,
     Math.min(MAX_CELL, Math.floor(Math.min(availW / cols, availH / rows))),

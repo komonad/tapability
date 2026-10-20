@@ -151,9 +151,9 @@ async function main() {
     return bad;
   })()`);
   check("clue numbers are shown smallest first", clueOrder === 0, String(clueOrder));
-  check("footer does not leak the wall count", !summary.hasWallCount, summary.info);
+  check("puzzle information does not leak the wall count", !summary.hasWallCount, summary.info);
   check(
-    "footer shows the seed and clue count",
+    "puzzle information shows the seed and clue count",
     summary.info.includes(String(summary.seed)) && summary.info.includes(String(summary.clues)),
     summary.info,
   );
@@ -172,10 +172,16 @@ async function main() {
     const bounds = guide.getBoundingClientRect();
     return { left: bounds.right <= stage.left, hasIntro: guide.contains(document.getElementById('intro')),
       hasHelp: guide.contains(document.getElementById('help')),
+      hasPuzzleDetails: ['title','lang','status','info','stats','quality','btn-onestep','btn-hint','hint-card'].every(id => guide.contains(document.getElementById(id))),
+      fullHeight: stage.top <= 12 && stage.bottom >= innerHeight - 12,
+      onlyBoard: document.querySelector('.board-area').children.length === 1,
+      verticallyCentered: Math.abs((board.top + board.bottom) - (stage.top + stage.bottom)) < 3,
       centered: Math.abs((board.left + board.right) - (stage.left + stage.right)) < 3 };
   })()`);
   check("rules and help occupy the left column", guideLayout.left && guideLayout.hasIntro && guideLayout.hasHelp, JSON.stringify(guideLayout));
   check("the board is centered in its stage", guideLayout.centered, JSON.stringify(guideLayout));
+  check("puzzle details and reasoning controls occupy the left column", guideLayout.hasPuzzleDetails, JSON.stringify(guideLayout));
+  check("the board occupies the full-height central area", guideLayout.fullHeight && guideLayout.onlyBoard && guideLayout.verticallyCentered, JSON.stringify(guideLayout));
   const sliderSync = await evaluate(`(() => {
     const slider = document.querySelector('[data-setting-slider="difficulty"]');
     slider.value = '5'; slider.dispatchEvent(new Event('input', {bubbles:true}));
@@ -1209,7 +1215,7 @@ async function main() {
         cs.display !== "none" && Number(cs.opacity) > 0.5;
     };
     return {
-      buttons: [...document.querySelectorAll(".panel button:not([hidden])")].map((b) => ({
+      buttons: [...document.querySelectorAll(".panel button:not([hidden]), .reasoning-buttons button")].map((b) => ({
         id: b.id, text: (b.textContent || "").trim(), visible: visible(b),
       })),
       labels: [...document.querySelectorAll(".field label")].map((l) => ({
