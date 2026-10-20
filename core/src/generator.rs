@@ -247,9 +247,9 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
             continue;
         }
 
-        // (4) strip clues from the maximal set down to a minimal one: a clue is
-        // dropped whenever the puzzle still has exactly one solution, so no
-        // single clue of the result can be removed any more.
+        // (4) remove a clue only after proving the weaker puzzle is unique.
+        // An aborted proof retains its clue, so work slicing can leave
+        // redundant givens in the resulting set.
         //
         // This is the dual of "start blank and add random clues until the
         // solution is unique", and it reaches the minimal set far more cheaply:
