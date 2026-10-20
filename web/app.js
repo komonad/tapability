@@ -100,7 +100,6 @@ const buttonIds = [
   "btn-solution",
   "btn-onestep",
   "btn-hint",
-  "btn-hint-apply",
   "btn-hint-dismiss",
   "btn-cluestep",
   "btn-undo",
@@ -283,7 +282,6 @@ function updateChrome(state) {
     els[id].disabled = !hasPuzzle;
   }
   els["btn-hint"].disabled = !hasPuzzle || state.showSolution || state.solved;
-  els["btn-hint-apply"].disabled = !hasPuzzle || !state.hint || state.showSolution;
   els["btn-hint-dismiss"].disabled = ui.busy || !state.hint;
   els["btn-new"].disabled = ui.busy;
   els["btn-apply"].disabled = ui.busy;
@@ -295,41 +293,8 @@ function updateChrome(state) {
   }
 }
 
-function hintCell(cell) {
-  return fill(t("hint.cell"), [Math.floor(cell / ui.cols) + 1, cell % ui.cols + 1]);
-}
-function hintMarks(marks) {
-  return marks.map(([cell,value]) => fill(t("hint.mark"), [hintCell(cell), t(value === WALL ? "hint.black" : "hint.white")])).join(t("hint.separator"));
-}
-function hintRule(step) {
-  const source = step.focus.length ? hintCell(step.focus[0]) : "";
-  return fill(t(`hint.rule.${step.rule}`), [source]) + " " + hintMarks(step.marks);
-}
 function updateHint(state) {
-  const card = document.getElementById("hint-card"), hint = state.hint;
-  card.hidden = !hint || state.showSolution;
-  if (!hint) return;
-  document.getElementById("hint-title").textContent = t(`hint.tier.${hint.tier}`);
-  document.getElementById("hint-explanation").textContent = hint.tier === "rule"
-    ? hintRule(hint.steps[0])
-    : fill(t(`hint.explain.${hint.tier}`), [hintMarks([hint.assumption]), hint.steps.length]);
-  const proof = document.getElementById("hint-proof");
-  proof.hidden = hint.tier !== "contradiction";
-  const list = document.getElementById("hint-steps");
-  list.replaceChildren();
-  for (const step of hint.tier === "contradiction" ? hint.steps : []) {
-    const item = document.createElement("li"); item.textContent = hintRule(step); list.append(item);
-  }
-  if (hint.conflict) {
-    const item = document.createElement("li");
-    item.textContent = fill(t(`hint.conflict.${hint.conflict.kind}`), [hintCell(hint.conflict.focus[0])]);
-    list.append(item);
-  }
-  const metrics=hint.proofMetrics;
-  document.getElementById("hint-metrics").textContent=metrics
-    ? fill(t("hint.metrics"),[metrics.assumptionDepth,metrics.ruleGroups,metrics.clues,metrics.spanW,metrics.spanH])
-    : t("hint.metrics.unknown");
-  document.getElementById("hint-conclusion").textContent = fill(t("hint.conclusion"), [hintMarks(hint.marks)]);
+  document.getElementById("hint-card").hidden = !state.hint || state.showSolution;
 }
 
 function setStatus(text, kind) {
@@ -575,7 +540,7 @@ function render() {
   }
   outlineGroup(ctx, errors, C.errorOutline, 2);
 
-  if (!showSolution) {
+  if (!showSolution && !state.hint) {
     for (const i of state.deductionCells || []) {
       const x=(i%cols)*cell,y=Math.floor(i/cols)*cell;
       ctx.fillStyle="rgba(255,196,72,0.16)";
@@ -595,19 +560,7 @@ function render() {
     ctx.strokeRect(x + 1, y + 1, cell - 2, cell - 2);
   }
 
-  if (state.hint && !showSolution) {
-    const focus = new Uint8Array(n);
-    for (const i of state.hint.focus) if (i >= 0 && i < n) focus[i] = 1;
-    outlineGroup(ctx, focus, C.hover, 2);
-    for (const [i,value] of state.hint.marks) {
-      const x=(i%cols)*cell, y=Math.floor(i/cols)*cell;
-      ctx.strokeStyle=C.highlightOutline; ctx.lineWidth=3;
-      ctx.strokeRect(x+2,y+2,cell-4,cell-4);
-      ctx.fillStyle=C.hover;
-      if (value===WALL) { ctx.globalAlpha=0.35; ctx.fillRect(x+cell*0.3,y+cell*0.3,cell*0.4,cell*0.4); ctx.globalAlpha=1; }
-      else { ctx.beginPath(); ctx.arc(x+cell/2,y+cell/2,Math.max(1.5,cell*0.09),0,Math.PI*2); ctx.fill(); }
-    }
-  }
+
 
   // wrong cells from the last check
   ctx.strokeStyle = C.wrong;
@@ -630,6 +583,12 @@ function render() {
   ctx.strokeStyle = state.solved ? C.win : C.border;
   ctx.lineWidth = state.solved ? 3 : 2;
   ctx.strokeRect(1, 1, width - 2, height - 2);
+
+  if (state.hint && !showSolution) {
+    const focus = new Uint8Array(n);
+    for (const i of state.hint.focus) if (i >= 0 && i < n) focus[i] = 1;
+    outlineGroup(ctx, focus, C.highlightOutline, 3);
+  }
 
   if (ui.busy && ui.veil) {
     ctx.fillStyle = "rgba(246, 247, 250, 0.55)";
@@ -1478,7 +1437,6 @@ els["btn-clear"].addEventListener("click", () => run("reset"));
 els["btn-check"].addEventListener("click", () => run("check"));
 els["btn-solution"].addEventListener("click", () => run("solution"));
 els["btn-hint"].addEventListener("click", () => run("hint"));
-els["btn-hint-apply"].addEventListener("click", () => run("hintapply"));
 els["btn-hint-dismiss"].addEventListener("click", () => run("hintdismiss"));
 els["btn-onestep"].addEventListener("click", () => run("onestep"));
 els["btn-cluestep"].addEventListener("click", () => stepClue(ui.hover));

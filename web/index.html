@@ -22,7 +22,7 @@
               <select id="lang" aria-label="Language"></select>
             </label>
           </div>
-          <p id="status" class="status"></p>
+          <p id="status" class="status" role="status"></p>
         </header>
         <div class="puzzle-info">
           <p id="info" class="info"></p>
@@ -35,17 +35,9 @@
           </button>
           <button id="btn-hint" type="button"><span data-i18n="btn.hint">提示</span><kbd>H</kbd></button>
         </div>
-        <section id="hint-card" class="hint-card" hidden aria-labelledby="hint-title" aria-live="polite">
-          <h2 id="hint-title" class="panel-title"></h2>
-          <p id="hint-explanation"></p>
-          <details id="hint-proof"><summary data-i18n="hint.proof">查看推理过程</summary><ol id="hint-steps"></ol></details>
-          <p id="hint-conclusion"></p>
-          <p id="hint-metrics" class="hint"></p>
-          <div class="buttons row">
-            <button id="btn-hint-apply" type="button" data-i18n="hint.apply">应用提示</button>
-            <button id="btn-hint-dismiss" type="button" data-i18n="hint.dismiss">收起</button>
-          </div>
-        </section>
+        <div id="hint-card" class="hint-card" hidden>
+          <button id="btn-hint-dismiss" type="button" data-i18n="hint.dismiss">收起提示</button>
+        </div>
         <h2 class="panel-title" data-i18n="guide.rules">规则与操作</h2>
         <!-- Every translatable element carries its default (Chinese) text, so
              the page still reads correctly if the scripts are stale or blocked. -->

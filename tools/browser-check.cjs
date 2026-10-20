@@ -1272,25 +1272,38 @@ async function main() {
   await evaluate(`run('undo')`);
   check("a second undo restores the board before any deduction",await evaluate(`ui.state.cells===${JSON.stringify(roundStart)} && ui.state.deductionCells.length===0 && !ui.state.canUndo`));
 
-  // Hint previews are separate from player marks and survive only that position.
+  // Hints identify a region without exposing a conclusion or modifying marks.
   await evaluate(`send('set size 6')`);
   await evaluate(`generate(42)`);
   const hintBefore=await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,canUndo:ui.state.canUndo})`);
+  await evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+  await evaluate(`window.hintPixelBefore=els.canvas.getContext('2d').getImageData(0,0,els.canvas.width,els.canvas.height).data`);
   await evaluate(`run('hint')`);
-  const hintPreview=await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,canUndo:ui.state.canUndo,hint:ui.state.hint,visible:!document.getElementById('hint-card').hidden,left:document.getElementById('hint-card').getBoundingClientRect().right<=document.getElementById('board').getBoundingClientRect().left,explanation:document.getElementById('hint-explanation').textContent,unknown:ui.state.solution})`);
-  check("hint preview preserves marks and undo history",hintBefore.cells===hintPreview.cells && hintBefore.canUndo===hintPreview.canUndo && hintBefore.seed===hintPreview.seed);
-  check("hint explanation appears on the left without revealing the solution",hintPreview.visible && hintPreview.left && hintPreview.explanation.length>0 && hintPreview.unknown==="");
-  check("direct hint records human proof metrics",hintPreview.hint && hintPreview.hint.tier==='rule' && hintPreview.hint.proofMetrics.assumptionDepth===0);
-  await evaluate(`run('hintapply')`);
-  const hintAfter=await evaluate(`({cells:ui.state.cells,hint:ui.state.hint,hidden:document.getElementById('hint-card').hidden})`);
-  check("applying a hint commits only its conclusions",hintPreview.hint.marks.every(([i,v])=>hintAfter.cells[i]===String(v)) && [...hintAfter.cells].every((v,i)=>v===hintBefore.cells[i] || hintPreview.hint.marks.some(([j])=>j===i)) && !hintAfter.hint && hintAfter.hidden);
-  await evaluate(`run('undo')`);
-  check("hinted marks can be undone",await evaluate(`ui.state.cells===${JSON.stringify(hintBefore.cells)}`));
-  await evaluate(`run('hint')`); await evaluate(`run('hintdismiss')`);
+  const hintPreview=await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,canUndo:ui.state.canUndo,hint:ui.state.hint,visible:!document.getElementById('hint-card').hidden,left:document.getElementById('hint-card').getBoundingClientRect().right<=document.getElementById('board').getBoundingClientRect().left,unknown:ui.state.solution})`);
+  check("hint preserves marks and undo history",hintBefore.cells===hintPreview.cells && hintBefore.canUndo===hintPreview.canUndo && hintBefore.seed===hintPreview.seed);
+  check("hint controls stay on the left without revealing the solution",hintPreview.visible && hintPreview.left && hintPreview.unknown==="");
+  check("hint exposes only focus positions",hintPreview.hint && JSON.stringify(Object.keys(hintPreview.hint))==='["focus"]' && hintPreview.hint.focus.length>0);
+  const hintPixels=await evaluate(`(() => {
+    const after=els.canvas.getContext('2d').getImageData(0,0,els.canvas.width,els.canvas.height).data;
+    let changed=0,interior=0;
+    const size=ui.cell*ui.dpr;
+    for(let y=0;y<els.canvas.height;y++)for(let x=0;x<els.canvas.width;x++){
+      const p=(y*els.canvas.width+x)*4;
+      if([0,1,2,3].some(k=>Math.abs(after[p+k]-window.hintPixelBefore[p+k])>8)){
+        changed++;
+        if(x%size>4*ui.dpr && x%size<size-4*ui.dpr && y%size>4*ui.dpr && y%size<size-4*ui.dpr)interior++;
+      }
+    }
+    delete window.hintPixelBefore;
+    return {changed,interior};
+  })()`);
+  check("hint draws outlines without black or white answer previews",hintPixels.changed>0 && hintPixels.interior===0,JSON.stringify(hintPixels));
+  check("hint has no apply or proof controls",await evaluate(`!document.getElementById('btn-hint-apply') && !document.getElementById('hint-proof') && !document.getElementById('hint-conclusion')`));
+  await evaluate(`run('hintdismiss')`);
   check("dismissing a hint preserves the board",await evaluate(`!ui.state.hint && ui.state.cells===${JSON.stringify(hintBefore.cells)}`));
   await evaluate(`run('hint')`);
-  await evaluate(`(() => { const [i,v]=ui.state.hint.marks[0]; return run('paint begin '+(i%ui.cols)+' '+Math.floor(i/ui.cols)+' '+(v===1?1:0)); })()`);
-  check("editing invalidates the hint preview",await evaluate(`!ui.state.hint && document.getElementById('hint-card').hidden`));
+  await evaluate(`(() => { const i=ui.cells.findIndex(v=>v===0); return run('paint begin '+(i%ui.cols)+' '+Math.floor(i/ui.cols)+' 1'); })()`);
+  check("editing invalidates the hint",await evaluate(`!ui.state.hint && document.getElementById('hint-card').hidden`));
   await evaluate(`run('reset')`);
   const beforeCancel = await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,undo:ui.state.canUndo,size:ui.state.w})`);
   await evaluate(`send('set size 60')`);

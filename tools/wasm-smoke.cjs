@@ -92,12 +92,8 @@ check(
 );
 
 const preview = call("hint");
-check("hint is previewed without changing marks", preview.cells === puzzle.cells && preview.hint && preview.hint.marks.length > 0 && preview.solution === "");
-check("hint carries a named rule or verified proof", ["rule","contradiction","sat"].includes(preview.hint?.tier));
-const hinted = call("hintapply");
-check("applying a hint changes only its conclusions", hinted.hint === null && preview.hint.marks.every(([i,v]) => hinted.cells[i] === String(v)) && [...hinted.cells].every((v,i) => v === puzzle.cells[i] || preview.hint.marks.some(([j]) => j === i)));
-call("reset");
-call("hint");
+check("hint identifies a focus area without changing marks", preview.cells === puzzle.cells && preview.hint?.focus.length > 0 && preview.solution === "");
+check("hint contains only positions", JSON.stringify(Object.keys(preview.hint || {})) === '["focus"]');
 check("dismissing a hint does not change the board", call("hintdismiss").cells === puzzle.cells);
 
 // clue cells start empty (2), everything else undecided (0)

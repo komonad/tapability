@@ -87,6 +87,7 @@ pub struct App {
     /// Undo stack of (cell, previous value), most recent last.
     history: History,
     pub deduction_selection: Vec<usize>,
+    pub hint_focus: Vec<usize>,
     /// Wall cell whose group is spotlighted, if any.
     highlight_anchor: Option<usize>,
     /// Whether the spotlight comes from Shift-hovering rather than a click.
@@ -125,6 +126,7 @@ impl App {
             highlight: Vec::new(),
             history: History::default(),
             deduction_selection: Vec::new(),
+            hint_focus: Vec::new(),
             highlight_anchor: None,
             highlight_from_hover: false,
             last_changed: None,
@@ -327,6 +329,11 @@ impl App {
     }
 
     pub fn hint(&mut self) {
+        if !self.hint_focus.is_empty() {
+            self.hint_focus.clear();
+            self.refresh_status();
+            return;
+        }
         if self.generating || self.show_solution {
             return;
         }
@@ -341,22 +348,9 @@ impl App {
         );
         match result {
             tapa_core::hints::Outcome::Found(hint) => {
-                let body: Vec<u16> = format!("{}\n\nApply this hint?", hint.english(&puzzle.grid))
-                    .encode_utf16()
-                    .chain(Some(0))
-                    .collect();
-                let title: Vec<u16> = "Tapa hint".encode_utf16().chain(Some(0)).collect();
-                if unsafe {
-                    MessageBoxW(
-                        self.hwnd,
-                        body.as_ptr(),
-                        title.as_ptr(),
-                        MB_YESNO | MB_ICONINFORMATION | MB_DEFBUTTON2,
-                    )
-                } == IDYES
-                {
-                    self.apply_marks(hint.marks);
-                }
+                self.hint_focus = hint.focus;
+                self.status = "Look at the orange highlighted area.".into();
+                self.status_kind = StatusKind::Info;
             }
             tapa_core::hints::Outcome::Inconsistent => {
                 self.status =
@@ -377,6 +371,7 @@ impl App {
 
     /// Show or hide the solution (the S button / key).
     pub fn toggle_solution(&mut self) {
+        self.hint_focus.clear();
         if self.puzzle.is_some() {
             self.show_solution = !self.show_solution;
             self.status = if self.show_solution {
@@ -389,6 +384,7 @@ impl App {
     }
 
     pub fn undo(&mut self) {
+        self.hint_focus.clear();
         if self.show_solution {
             return;
         }
@@ -408,6 +404,7 @@ impl App {
 
     /// Recompute everything that depends on the marks.
     fn after_change(&mut self, focus: Option<usize>) {
+        self.hint_focus.clear();
         if focus.is_some() {
             self.last_changed = focus;
         }
@@ -474,6 +471,7 @@ impl App {
             false,
         );
         self.deduction_selection.clear();
+        self.hint_focus.clear();
         self.highlight_anchor = None;
         self.highlight_from_hover = false;
         self.after_change(None);
@@ -557,6 +555,7 @@ impl App {
         self.highlight.clear();
         self.history.clear();
         self.deduction_selection.clear();
+        self.hint_focus.clear();
         self.highlight_anchor = None;
         self.highlight_from_hover = false;
         self.last_changed = None;
@@ -785,17 +784,7 @@ impl App {
                 let down = unsafe { GetAsyncKeyState(VK_SHIFT_KEY) < 0 };
                 self.update_hover_highlight(down);
             }
-            VK_S_KEY => {
-                if self.puzzle.is_some() {
-                    self.show_solution = !self.show_solution;
-                    self.status = if self.show_solution {
-                        "Showing the solution (S to hide)".to_string()
-                    } else {
-                        "Solution hidden".to_string()
-                    };
-                    self.status_kind = StatusKind::Info;
-                }
-            }
+            VK_S_KEY => self.toggle_solution(),
             _ => {}
         }
     }

@@ -410,8 +410,14 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
     if let Some(puzzle) = &app.puzzle {
         let n = puzzle.grid.len();
         if app.cells.len() == n {
-            let mut selected=vec![false;n];
-            if !app.show_solution { for &i in &app.deduction_selection { if i<n {selected[i]=true;} } }
+            let mut selected = vec![false; n];
+            if !app.show_solution && app.hint_focus.is_empty() {
+                for &idx in &app.deduction_selection {
+                    if idx < n {
+                        selected[idx] = true;
+                    }
+                }
+            }
             // nothing may bleed out of the board area, whatever the window size
             let saved = SaveDC(hdc);
             IntersectClipRect(hdc, 0, HEADER - 2, g.panel_x - 2, h);
@@ -559,11 +565,27 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
             }
 
             for &idx in &app.deduction_selection {
-                if app.show_solution {break;}
+                if app.show_solution || !app.hint_focus.is_empty() {
+                    break;
+                }
                 let (x,y)=puzzle.grid.xy(idx);
                 let px=g.grid_x+x as i32*g.cell;
                 let py=g.grid_y+y as i32*g.cell;
                 stroke(hdc,&rect(px+1,py+1,px+g.cell-1,py+g.cell-1),g.pen_highlight);
+            }
+
+            if !app.show_solution {
+                let mut focus = vec![false; n];
+                for &idx in &app.hint_focus {
+                    if idx < n {
+                        focus[idx] = true;
+                    }
+                }
+                for &idx in &app.hint_focus {
+                    if idx < n {
+                        outline_cell(hdc, g, puzzle, &focus, g.pen_highlight, idx);
+                    }
+                }
             }
 
             // hover highlight

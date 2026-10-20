@@ -48,7 +48,7 @@ Fill every cell black or white:
 | left click on a white cell | switches it to wall, and vice versa |
 | Z | undo (hold to repeat; one stroke = one entry per cell) |
 | D | one step: apply clue, 2x2 and connection deductions |
-| H | preview a rule, contradiction or SAT-verified hint |
+| H | highlight an area worth examining |
 | middle click a clue | step just that one clue, without cascading |
 | Alt + left click a clue | the same, for mice and trackpads without a middle button |
 | drag the size slider | pick a board size; the puzzle is rebuilt when you release it |
@@ -109,9 +109,9 @@ patterns of every clue against that same snapshot. A round may confirm several
 cells, but new marks do not trigger more deductions until the next click. Each
 round is one undoable action. Its changed cells remain selected, including both
 black and white marks. Z restores the whole previous position and its selection;
-manual edits clear the selection. Single-clue steps and applied hints use the
-same grouped undo behavior. Internal difficulty assessment uses a separate
-basic-rule closure that repeats until stable.
+manual edits clear the selection. Single-clue steps use the same grouped undo
+behavior. Internal difficulty assessment uses a separate basic-rule closure that
+repeats until stable.
 
 ## Controls and settings in the UI
 
@@ -337,30 +337,21 @@ score; an unfinished reasoning assessment does not imply an invalid puzzle.
 
 ## Hints
 
-Press **H** or **Hint** to preview one next move. The browser displays the
-explanation on the left and highlights its target cells. **Apply hint** commits
-only those conclusions as one undoable action. Editing, resetting, undoing or
-replacing a board invalidates the preview. The native H shortcut previews the
-proof in a dialog before applying it.
+Press **H** or **Hint** to highlight an area worth examining in orange. Hints
+show positions only: no black or white conclusions, proof text or automatic
+marks. The browser offers a dismiss button; native H toggles the highlight.
+Editing, resetting, undoing, revealing the solution or replacing the board clears
+the hint. Requesting or dismissing a hint leaves the undo history unchanged.
 
-Hints first use a named direct rule, then try one-cell contradiction proofs.
-A contradiction hint includes its assumed mark, replayable basic-rule steps and
-the conflicting clue, black square or connectivity condition. Only the refuted
-assumption's opposite is committed; hypothetical intermediate marks remain in
-the explanation. If these rules do not yield a hint, incremental SAT verifies
-that the opposite value has no satisfying completion. Such a hint is labelled
-**Complete solver verification** and does not claim a human-rule proof.
-
-Hint search checks that the current player marks have a satisfying completion
-before proposing a move. Inconsistent, ambiguous and interrupted searches never
-turn an arbitrary model into a hint. The search uses a 2.5-second response window;
-interruption preserves the board. Hint proofs use the player's marks and puzzle
-constraints, without reading the stored answer. Human-rule hints record assumption
-depth, rule groups, distinct clues and the displayed proof span. These describe
-one verified proof and bound the simplest proof from above; they are not a
-minimum proof or calibrated human grade. SAT-only hints have unknown human-proof
-complexity. The D shortcut keeps its single
-snapshot round semantics.
+Hint search first uses direct rules, then one-cell contradiction proofs, then
+incremental SAT verification. It checks that the current marks have a satisfying
+completion and verifies a forced move before returning its focus positions.
+Inconsistent, ambiguous and interrupted searches never turn an arbitrary model
+into a hint. The search uses a 2.5-second response window and preserves the board
+on interruption. Verification uses the player's marks and puzzle constraints,
+without reading the stored answer. Proof details remain internal to the engine;
+the browser response contains only focus indices. The D shortcut keeps its
+single-snapshot round semantics.
 
 ## How the generator works
 
