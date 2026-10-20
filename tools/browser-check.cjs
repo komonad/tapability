@@ -185,6 +185,43 @@ async function main() {
   })()`);
   check("difficulty slider updates its field and restores settings", sliderSync.changed === '5' && sliderSync.restored === '3', JSON.stringify(sliderSync));
 
+  const rangeControl = await evaluate(`(() => {
+    const row = document.querySelector('[data-field=density]');
+    const handles = [...row.querySelectorAll('.density-range input[type=range]')];
+    const sameTrack = handles.length === 2 && handles[0].parentNode === handles[1].parentNode;
+    handles[0].value = '0.4'; handles[0].dispatchEvent(new Event('input', {bubbles:true}));
+    handles[1].value = '0.7'; handles[1].dispatchEvent(new Event('input', {bubbles:true}));
+    const changed = row.querySelector('input[data-key]').value;
+    const display = row.querySelector('output').value;
+    handles[0].value = '0.75'; handles[0].dispatchEvent(new Event('input', {bubbles:true}));
+    const ordered = Number(handles[0].value) <= Number(handles[1].value);
+    fillFromText(ui.state.settingsText);
+    return {sameTrack,changed,display,ordered,restored:row.querySelector('output').value};
+  })()`);
+  check("density has one shared track with ordered handles and percentages", rangeControl.sameTrack && rangeControl.ordered && rangeControl.changed === '0.40-0.70' && rangeControl.display === '40%–70%' && rangeControl.restored === '50%–60%', JSON.stringify(rangeControl));
+
+  const densityBox = await evaluate(`(() => {
+    const range = document.querySelector('.density-range');
+    range.scrollIntoView({block:'nearest'});
+    const r = range.getBoundingClientRect();
+    return {x:r.left,y:r.top+r.height/2,w:r.width};
+  })()`);
+  const dragDensity = async (from, to) => {
+    const point = value => ({x:densityBox.x+(value-0.05)/0.70*densityBox.w,y:densityBox.y});
+    await call("Input.dispatchMouseEvent", {type:"mouseMoved",...point(from)});
+    await call("Input.dispatchMouseEvent", {type:"mousePressed",...point(from),button:"left",buttons:1,clickCount:1});
+    await call("Input.dispatchMouseEvent", {type:"mouseMoved",...point(to),buttons:1});
+    await call("Input.dispatchMouseEvent", {type:"mouseReleased",...point(to),button:"left",buttons:0,clickCount:1});
+  };
+  await dragDensity(0.5,0.4);
+  check("density endpoints respond to pointer drags on the shared track",
+    (await evaluate(`document.getElementById('f-density').value`)) === '0.40-0.60');
+  await evaluate(`fillFromText(ui.state.settingsText.replace(/^density = .*$/m,'density = 0.50-0.50'))`);
+  await dragDensity(0.5,0.45);
+  check("overlapping range handles can separate to the left",
+    (await evaluate(`document.getElementById('f-density').value`)) === '0.45-0.50');
+  await evaluate(`fillFromText(ui.state.settingsText); document.querySelector('.panel').scrollTop=0`);
+
   // ---- language: Simplified Chinese by default, switchable, remembered ----
   const zh = await evaluate(`({
     htmlLang: document.documentElement.lang,
@@ -1170,7 +1207,7 @@ async function main() {
       labels: [...document.querySelectorAll(".field label")].map((l) => ({
         text: (l.textContent || "").trim(), visible: visible(l),
       })),
-      inputs: [...document.querySelectorAll(".field input")].map((i) => visible(i)),
+      inputs: [...document.querySelectorAll(".field input:not([type=hidden])")].map((i) => visible(i)),
       intro: (document.getElementById("intro").textContent || "").trim(),
       panel: visible(document.querySelector(".panel")),
     };

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 pub struct Settings {
     /// Board is `size x size`.
     pub size: usize,
-    /// Number of clue-removal orders compared for logical difficulty.
+    /// Number of distinct candidate puzzles compared for logical difficulty.
     pub difficulty: usize,
     /// `None` means "pick a seed from the clock".
     pub seed: Option<u64>,
@@ -85,12 +85,12 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
     ),
     (
         "difficulty", "Difficulty effort (1-5)",
-        "Compare this many clue-removal orders; prefer puzzles with more cells left after basic deductions. Budgets still apply.",
+        "Compare distinct puzzles, preferring those solvable with one-cell contradiction tests. Higher effort searches more candidates within the budget.",
     ),
     (
         "density",
-        "Density LO-HI",
-        "Share of cells that become walls, picked randomly in this range. Higher fills the board more.",
+        "Target black share",
+        "Target fraction of answer cells colored black, chosen within this range for each puzzle. This changes the shape, not a difficulty grade.",
     ),
     (
         "max_clueless_fraction",
@@ -349,7 +349,7 @@ impl Settings {
 pub const EXAMPLE: &str = "\
 # Tapa generation settings. Every line is optional.
 #   size                  board is size x size (3..60)
-#   difficulty            clue-removal orders compared for difficulty (1..5)
+#   difficulty            distinct candidate puzzles compared for difficulty (1..5)
 #   seed                  fixed seed; omit for a clock-based seed
 #   density               fraction of black cells, LO-HI
 #   max_clueless_fraction reject shapes whose biggest clue-free patch is a

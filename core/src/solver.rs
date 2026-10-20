@@ -243,6 +243,12 @@ impl Solver {
             aborted: false,
             scratch: Scratch::new(self.grid.len()),
         };
+        ctx.scratch.new_blacks.extend(
+            initial
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &value)| (value == BLACK).then_some(i)),
+        );
         let mut out = Vec::new();
         let mut state = initial.to_vec();
         self.search(&mut state, limits.max_solutions, &mut ctx, &mut out);
@@ -380,7 +386,6 @@ impl Solver {
 
     /// Bring `state` to a fixpoint. Returns false on contradiction.
     /// (The search calls `propagate_with` directly to reuse its buffers.)
-    #[cfg(test)]
     pub fn propagate(&self, state: &mut [u8]) -> bool {
         let mut scratch = Scratch::new(state.len());
         for (i, &v) in state.iter().enumerate() {
@@ -515,7 +520,7 @@ impl Solver {
             // (4) connectivity of the potential black cells. The component
             // structure only changes when a cell becomes white; black cells
             // only change which component holds black.
-            if black_added || white_added {
+            if black_added || white_added || scratch.comp_dirty {
                 if !self.propagate_connectivity(state, scratch, &mut changed) {
                     return false;
                 }
@@ -658,6 +663,23 @@ mod tests {
     #[test]
     fn snake_on_5x5() {
         round_trip(5, 5, &[0, 1, 2, 7, 12, 17, 22, 23, 24]);
+    }
+
+    #[test]
+    fn search_checks_connectivity_after_a_white_branch() {
+        let solver = Solver::new(Grid::new(3, 1), &[]);
+        let result = solver.solve(&[BLACK, UNKNOWN, BLACK], &SolveLimits::unique_check(None));
+        assert!(result.is_unique());
+        assert_eq!(result.solutions[0], vec![BLACK, BLACK, BLACK]);
+        let result = solver.solve(&[BLACK, WHITE, BLACK], &SolveLimits::unique_check(None));
+        assert!(result.solutions.is_empty());
+    }
+
+    #[test]
+    fn search_checks_initial_black_squares() {
+        let solver = Solver::new(Grid::new(2, 2), &[]);
+        let result = solver.solve(&[BLACK; 4], &SolveLimits::unique_check(None));
+        assert!(result.solutions.is_empty());
     }
 
     #[test]

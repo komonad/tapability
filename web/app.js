@@ -874,14 +874,97 @@ function syncSettingSliders() {
     for (const slider of row.querySelectorAll("input[data-setting-slider]")) {
       const index = Number(slider.dataset.part || 0);
       const value = Number(source.value.split("-")[index]);
-      // Preserve imported values beyond the slider's normal range.
       if (Number.isFinite(value)) {
-        slider.min = String(Math.min(Number(slider.min), value));
-        slider.max = String(Math.max(Number(slider.max), value));
+        if (source.dataset.key !== "density") {
+          // Preserve imported values beyond the slider's normal range.
+          slider.min = String(Math.min(Number(slider.min), value));
+          slider.max = String(Math.max(Number(slider.max), value));
+        }
         slider.value = String(value);
       }
     }
+    if (source.dataset.key === "density") updateDensityRange(row);
   }
+}
+
+function updateDensityRange(row) {
+  const handles = [...row.querySelectorAll("input[data-setting-slider=density]")];
+  const [lo, hi] = handles.map(handle => Number(handle.value));
+  const track = row.querySelector(".density-range");
+  track.style.setProperty("--lo", `${(lo - 0.05) / 0.70 * 100}%`);
+  track.style.setProperty("--hi", `${(hi - 0.05) / 0.70 * 100}%`);
+  row.querySelector("output").value = `${Math.round(lo * 100)}%–${Math.round(hi * 100)}%`;
+  handles.forEach((handle, part) => {
+    handle.setAttribute("aria-label", t(part === 0 ? "density.lower" : "density.upper"));
+    handle.setAttribute("aria-valuetext", `${Math.round(Number(handle.value) * 100)}%`);
+    handle.setAttribute("aria-valuemin", part === 0 ? "0.05" : String(lo));
+    handle.setAttribute("aria-valuemax", part === 0 ? String(hi) : "0.75");
+  });
+}
+
+function buildDensityRange(row, field, source) {
+  source.type = "hidden";
+  const value = document.createElement("output");
+  value.className = "density-value";
+  value.setAttribute("for", "density-low density-high");
+  const track = document.createElement("div");
+  track.className = "density-range";
+  const selection = document.createElement("span");
+  selection.className = "density-selection";
+  track.append(selection);
+  ["low", "high"].forEach((name, part) => {
+    const handle = document.createElement("input");
+    handle.id = `density-${name}`;
+    handle.type = "range";
+    handle.min = "0.05"; handle.max = "0.75"; handle.step = "0.01";
+    handle.dataset.settingSlider = "density";
+    handle.dataset.part = String(part);
+    handle.addEventListener("input", () => {
+      const handles = [...track.querySelectorAll("input")];
+      const other = Number(handles[1 - part].value);
+      handle.value = String(part === 0 ? Math.min(Number(handle.value), other) : Math.max(Number(handle.value), other));
+      source.value = handles.map(input => Number(input.value).toFixed(2)).join("-");
+      updateDensityRange(row);
+    });
+    handle.addEventListener("focus", () => showHelp(field, row));
+    handle.addEventListener("blur", () => showHelp(null, null));
+    track.append(handle);
+  });
+  let dragging = null;
+  const moveHandle = event => {
+    if (!dragging) return;
+    if (dragging.part === null) {
+      if (event.clientX === dragging.startX) return;
+      dragging.part = event.clientX < dragging.startX ? 0 : 1;
+    }
+    const handle = track.querySelectorAll("input")[dragging.part];
+    const rect = track.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    handle.value = String(0.05 + fraction * 0.70);
+    handle.dispatchEvent(new Event("input", { bubbles: true }));
+    handle.focus({ preventScroll: true });
+  };
+  track.addEventListener("pointerdown", event => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handles = [...track.querySelectorAll("input")];
+    const [lo, hi] = handles.map(handle => Number(handle.value));
+    const rect = track.getBoundingClientRect();
+    const target = 0.05 + (event.clientX - rect.left) / rect.width * 0.70;
+    dragging = { part: lo === hi ? null : Math.abs(target - lo) < Math.abs(target - hi) ? 0 : 1, startX: event.clientX };
+    track.setPointerCapture(event.pointerId);
+    moveHandle(event);
+  });
+  track.addEventListener("pointermove", moveHandle);
+  const finish = event => {
+    dragging = null;
+    if (track.hasPointerCapture(event.pointerId)) track.releasePointerCapture(event.pointerId);
+  };
+  track.addEventListener("pointerup", finish);
+  track.addEventListener("pointercancel", finish);
+  track.addEventListener("lostpointercapture", () => { dragging = null; });
+  row.append(value, track);
+  row.querySelector("label").htmlFor = "density-low";
 }
 
 function buildFields(fields) {
@@ -905,8 +988,8 @@ function buildFields(fields) {
     input.autocomplete = "off";
 
     row.append(label, input);
-    const specs = field.key === "density" ? [[0.05, 0.75, 0.01], [0.05, 0.75, 0.01]]
-      : SETTING_SLIDERS[field.key] ? [SETTING_SLIDERS[field.key]] : [];
+    if (field.key === "density") buildDensityRange(row, field, input);
+    const specs = SETTING_SLIDERS[field.key] ? [SETTING_SLIDERS[field.key]] : [];
     specs.forEach(([min, max, step], part) => {
       const slider = document.createElement("input");
       slider.type = "range";
@@ -914,11 +997,7 @@ function buildFields(fields) {
       slider.dataset.settingSlider = field.key; slider.dataset.part = String(part);
       slider.setAttribute("aria-label", `${fieldLabel(field)}${specs.length > 1 ? ` ${part + 1}` : ""}`);
       slider.addEventListener("input", () => {
-        if (field.key === "density") {
-          const pair = Array.from(row.querySelectorAll('input[type="range"]'));
-          if (Number(pair[0].value) > Number(pair[1].value)) pair[1 - part].value = slider.value;
-          input.value = pair.map(s => Number(s.value).toFixed(2)).join("-");
-        } else { input.value = slider.value; }
+        input.value = slider.value;
       });
       row.append(slider);
     });
@@ -1213,7 +1292,8 @@ function applyLanguageToDom() {
       const field = (ui.fields || []).find((f) => f.key === key);
       if (field && label) label.textContent = fieldLabel(field);
       if (field && input) input.title = fieldHelp(field);
-      if (field) {
+      if (field && key === "density") updateDensityRange(row);
+      else if (field) {
         const sliders = row.querySelectorAll("input[data-setting-slider]");
         sliders.forEach((slider, part) => {
           slider.setAttribute("aria-label", `${fieldLabel(field)}${sliders.length > 1 ? ` ${part + 1}` : ""}`);
@@ -1238,7 +1318,7 @@ function ensureTranslated() {
     const label = row.querySelector("label");
     if (label && label.textContent.trim().length === 0) {
       const field = (ui.fields || []).find((f) => f.key === row.dataset.field);
-      label.textContent = field ? fieldLabel(field) : row.dataset.field || "";
+      label.textContent = field ? fieldLabel(field) : row.dataset.field === "zoom" ? t("zoom.label") : row.dataset.field || "";
       repaired += 1;
     }
   }

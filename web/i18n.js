@@ -21,7 +21,7 @@ window.TAPA_I18N = {
     "hint.touch": "触屏：轻点格子循环 墙 → 空 → 清除 · 拖动一笔画 · 轻点线索推该线索",
     "guide.rules": "规则与操作",
     "field.difficulty.label": "难度筛选力度",
-    "field.difficulty.help": "比较 1–5 种删减顺序，优先选择基础推理后未定格更多的题目；受生成预算限制，不代表绝对难度等级。",
+    "field.difficulty.help": "比较 1–5 个不同形状的候选题，优先保留能通过一层反证推理解开的题，再比较推理工作量。受生成预算限制，不是绝对难度等级。",
     "panel.controls": "操作",
     "panel.generation": "生成参数",
     "panel.batch": "批量工具",
@@ -74,8 +74,10 @@ window.TAPA_I18N = {
 
     "field.size.label": "棋盘大小 (3-60)",
     "field.size.help": "棋盘是 size × size 格。改动它会重建布局并开始一道新题。",
-    "field.density.label": "密度 LO-HI",
-    "field.density.help": "成为墙的格子比例，在这个区间里随机取值。调高会更满。",
+    "density.lower": "目标黑格占比下限",
+    "density.upper": "目标黑格占比上限",
+    "field.density.label": "目标黑格占比",
+    "field.density.help": "每题在区间内随机选一个目标，让答案中约这个比例的格子涂黑。它影响形状，不是线索占比或难度等级。拖动同一轨道的两个端点选择范围。",
     "field.max_clueless_fraction.label": "最大无线索占比",
     "field.max_clueless_fraction.help":
       "当某个完全没有线索的连片区域超过棋盘的这个比例时，就丢弃这个形状。",
@@ -109,7 +111,7 @@ window.TAPA_I18N = {
       "Touch: tap a cell to cycle wall → empty → clear · drag to paint a stroke · tap a clue to step it",
     "guide.rules": "Rules & controls",
     "field.difficulty.label": "Difficulty effort",
-    "field.difficulty.help": "Compare 1–5 removal orders, preferring more unresolved cells after basic deductions. Budget limits apply; this is not an absolute difficulty grade.",
+    "field.difficulty.help": "Compare 1–5 distinct candidate puzzles, preferring puzzles solvable by one-cell contradiction tests, then more logical work. Budgets apply; this is not an absolute difficulty grade.",
     "panel.controls": "Controls",
     "panel.generation": "Generation",
     "panel.batch": "Batch tools",
@@ -165,9 +167,11 @@ window.TAPA_I18N = {
     "field.size.label": "Board size (3-60)",
     "field.size.help":
       "Board is size x size cells. Changing it rebuilds the layout and starts a new puzzle.",
-    "field.density.label": "Density LO-HI",
+    "density.lower": "Minimum target black cells",
+    "density.upper": "Maximum target black cells",
+    "field.density.label": "Target black cells",
     "field.density.help":
-      "Share of cells that become walls, picked randomly in this range. Higher fills the board more.",
+      "Choose a target fraction of black answer cells for each puzzle. This affects shape, not clue density or difficulty. Drag the two handles on one track to set the range.",
     "field.max_clueless_fraction.label": "Max clueless fraction",
     "field.max_clueless_fraction.help":
       "Reject a shape when its biggest patch with no clue at all is larger than this share of the board.",

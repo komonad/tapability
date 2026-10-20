@@ -10,7 +10,9 @@
 //!      unusable and we grow another one);
 //!   4. remove clues one by one in random order, keeping every removal that
 //!      still leaves a unique solution. The result is a puzzle that is
-//!      *minimal*: dropping any single remaining clue makes it ambiguous.
+//!      *minimal* when the proof budget completes every removal check;
+//!   5. compare distinct shapes using bounded one-cell contradiction analysis,
+//!      preferring completed logical solutions before unresolved bottlenecks.
 //!
 //! Every accepted puzzle is therefore guaranteed to have exactly one solution,
 //! and that solution is the shape the generator started from.
@@ -19,9 +21,10 @@ use std::time::Duration;
 
 use crate::clock::{now_ms, Timer};
 use crate::config::Settings;
+use crate::difficulty;
 use crate::model::{
-    clue_is_showable, clue_of, largest_blank_region, largest_clueless_region, one_step_deductions,
-    validate, Clue, Grid, Puzzle, BLACK, ORTHO, UNKNOWN, WHITE,
+    clue_is_showable, clue_of, largest_blank_region, largest_clueless_region, validate, Clue, Grid,
+    Puzzle, BLACK, ORTHO, UNKNOWN, WHITE,
 };
 use crate::rng::Rng;
 use crate::solver::{SolveLimits, Solver};
@@ -174,9 +177,14 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
     let mut spent_nodes = 0u64;
     let mut spent_time = Duration::ZERO;
 
+    let mut best_result: Option<GenResult> = None;
+    let mut best_score = None;
+    let mut accepted = 0usize;
+    let mut total_checks = 0usize;
+    let mut peak_nodes = 0u64;
     for _ in 0..cfg.max_attempts {
         if budget.exhausted() {
-            return None;
+            break;
         }
         attempts += 1;
 
@@ -230,39 +238,25 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         // the intermediate puzzles are dense, so refuting them is quick, while
         // the adding direction spends its time on near-unique puzzles, which is
         // exactly where the search is expensive.
-        let mut best = None;
-        let mut best_score = None;
-        let mut removals = 0;
-        let mut checks = 0;
-        let mut max_check_nodes = 0;
-        for order in 0..cfg.difficulty.max(1) {
-            if budget.exhausted() {
-                break;
-            }
-            let remaining = (cfg.difficulty.max(1) - order) as u64;
-            let mut local = Budget {
-                nodes: budget.nodes / remaining,
-                deadline: budget
-                    .deadline
-                    .map(|end| now_ms() + (end - now_ms()).max(0.0) / remaining as f64),
-                slack: budget.slack,
-                min_nodes: budget.min_nodes,
-            };
-            let (clues, removed, nodes, time, count, peak) =
-                minimise(&grid, &candidates, &start, cfg, rng, &mut local);
-            budget.spend(nodes);
-            spent_nodes += nodes;
-            spent_time += time;
-            checks += count;
-            max_check_nodes = max_check_nodes.max(peak);
-            let score = difficulty_score(&grid, &clues);
-            if best_score.map_or(true, |previous| score > previous) {
-                best_score = Some(score);
-                best = Some(clues);
-                removals = removed;
-            }
-        }
-        let clues = best.unwrap_or_else(|| candidates.clone());
+        let remaining_candidates = cfg.difficulty.max(1).saturating_sub(accepted).max(1) as u64;
+        let candidate_deadline = budget.deadline.map(|end| {
+            let now = now_ms();
+            now + (end - now).max(0.0) / remaining_candidates as f64
+        });
+        let mut local = Budget {
+            nodes: budget.nodes / remaining_candidates,
+            deadline: candidate_deadline,
+            slack: budget.slack,
+            min_nodes: budget.min_nodes,
+        };
+        let (clues, removals, nodes, solve_time, checks, max_check_nodes) =
+            minimise(&grid, &candidates, &start, cfg, rng, &mut local);
+        budget.spend(nodes);
+        spent_nodes += nodes;
+        spent_time += solve_time;
+        total_checks += checks;
+        peak_nodes = peak_nodes.max(max_check_nodes);
+        let score = difficulty_score(&grid, &clues, candidate_deadline);
         let clue_count = clues.len();
         let blank_region = blank_region(&grid, &solution, &clues);
         let black_count = solution.iter().filter(|&&c| c == BLACK).count();
@@ -276,7 +270,7 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
             continue;
         }
 
-        return Some(GenResult {
+        let result = GenResult {
             puzzle,
             stats: GenStats {
                 attempts,
@@ -291,22 +285,38 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
                 checks,
                 max_check_nodes,
             },
-        });
+        };
+        if best_score.map_or(true, |previous| score > previous) {
+            best_score = Some(score);
+            best_result = Some(result);
+        }
+        accepted += 1;
+        if accepted >= cfg.difficulty.max(1) {
+            break;
+        }
     }
-    None
+    if let Some(result) = &mut best_result {
+        result.stats.attempts = attempts;
+        result.stats.elapsed = started.elapsed();
+        result.stats.nodes = spent_nodes;
+        result.stats.solve_time = spent_time;
+        result.stats.checks = total_checks;
+        result.stats.max_check_nodes = peak_nodes;
+    }
+    best_result
 }
 
-/// Prefer unresolved cells after deterministic deductions, then fewer givens.
-fn difficulty_score(grid: &Grid, clues: &[(usize, Clue)]) -> (usize, usize) {
-    let mut state = vec![UNKNOWN; grid.len()];
-    for (cell, _) in clues {
-        state[*cell] = WHITE;
-    }
-    for (cell, value) in one_step_deductions(grid, &state, clues) {
-        state[cell] = value;
-    }
+/// Solvable one-cell contradiction chains outrank unresolved search bottlenecks.
+fn difficulty_score(
+    grid: &Grid,
+    clues: &[(usize, Clue)],
+    deadline: Option<f64>,
+) -> (bool, usize, usize, usize) {
+    let assessment = difficulty::assess(grid, clues, grid.len() * 12, deadline);
     (
-        state.iter().filter(|&&v| v == UNKNOWN).count(),
+        assessment.solved(),
+        assessment.contradiction_steps.min(12),
+        assessment.basic_remaining,
         grid.len() - clues.len(),
     )
 }
@@ -665,7 +675,7 @@ mod tests {
     }
 
     #[test]
-    fn difficulty_selection_prefers_less_basic_progress() {
+    fn difficulty_selection_prefers_verified_logical_chains() {
         let mut improved = 0;
         for seed in 1..=12 {
             let mut cfg = GenConfig::for_size(10, 10);
@@ -675,11 +685,11 @@ mod tests {
             let baseline = generate_with(&mut Rng::new(seed), &cfg).unwrap();
             cfg.difficulty = 3;
             let selected = generate_with(&mut Rng::new(seed), &cfg).unwrap();
-            let before = difficulty_score(&baseline.puzzle.grid, &baseline.puzzle.clues);
-            let after = difficulty_score(&selected.puzzle.grid, &selected.puzzle.clues);
+            let before = difficulty_score(&baseline.puzzle.grid, &baseline.puzzle.clues, None);
+            let after = difficulty_score(&selected.puzzle.grid, &selected.puzzle.clues, None);
             assert!(after >= before, "seed {seed}: {before:?} -> {after:?}");
-            improved += usize::from(after.0 > before.0);
-            println!("seed {seed}: unresolved {} -> {}", before.0, after.0);
+            improved += usize::from(after > before);
+            println!("seed {seed}: rating {before:?} -> {after:?}");
         }
         assert!(improved > 0);
     }

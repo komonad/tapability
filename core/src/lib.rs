@@ -6,13 +6,15 @@
 //!
 //! * [`model`] - the board, the clues and the rules (including live feedback)
 //! * [`solver`] - arc consistency plus search, counts solutions up to a limit
-//! * [`generator`] - tree-shaped puzzles whose clues prove a unique solution
+//! * [`generator`] - puzzle generation with uniqueness proofs and bounded logical assessment
+//! * [`difficulty`] - logical progress and one-cell contradiction assessment
 //! * [`config`] - the `key = value` settings the UI edits
 //! * [`rng`] - a small deterministic generator, so seeds reproduce puzzles
 //! * [`clock`] - monotonic milliseconds that also work in the browser
 
 pub mod clock;
 pub mod config;
+pub mod difficulty;
 pub mod generator;
 pub mod model;
 pub mod report;
