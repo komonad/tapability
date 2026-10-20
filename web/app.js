@@ -331,7 +331,7 @@ function layout() {
   const cols = ui.cols || 20;
   const rows = ui.rows || 20;
   const availW = Math.max(220, els.stage.clientWidth || window.innerWidth - 380);
-  const availH = Math.max(240, window.innerHeight - 230);
+  const availH = Math.max(200, els.stage.clientHeight || window.innerHeight - 140);
   const fitted = Math.max(
     MIN_CELL,
     Math.min(MAX_CELL, Math.floor(Math.min(availW / cols, availH / rows))),
@@ -358,6 +358,7 @@ function layout() {
 }
 
 window.addEventListener("resize", layout);
+new ResizeObserver(layout).observe(els.stage);
 
 /* ---- drawing ----------------------------------------------------------- */
 
@@ -859,6 +860,30 @@ function press(action) {
 
 /* ---- settings column --------------------------------------------------- */
 
+const SETTING_SLIDERS = {
+  size: [3, 60, 1], difficulty: [1, 5, 1],
+  max_clueless_fraction: [0, 1, 0.01],
+  node_budget: [1000, 1000000, 1000], time_budget_ms: [0, 30000, 100],
+  check_min_nodes: [100, 30000, 100], check_slack: [1, 10, 1], max_attempts: [1, 1000, 1],
+};
+
+function syncSettingSliders() {
+  for (const row of els.fields.querySelectorAll(".field[data-field]")) {
+    const source = row.querySelector("input[data-key]");
+    if (!source) continue;
+    for (const slider of row.querySelectorAll("input[data-setting-slider]")) {
+      const index = Number(slider.dataset.part || 0);
+      const value = Number(source.value.split("-")[index]);
+      // Preserve imported values beyond the slider's normal range.
+      if (Number.isFinite(value)) {
+        slider.min = String(Math.min(Number(slider.min), value));
+        slider.max = String(Math.max(Number(slider.max), value));
+        slider.value = String(value);
+      }
+    }
+  }
+}
+
 function buildFields(fields) {
   ui.fields = fields;
   els.fields.textContent = "";
@@ -880,12 +905,32 @@ function buildFields(fields) {
     input.autocomplete = "off";
 
     row.append(label, input);
+    const specs = field.key === "density" ? [[0.05, 0.75, 0.01], [0.05, 0.75, 0.01]]
+      : SETTING_SLIDERS[field.key] ? [SETTING_SLIDERS[field.key]] : [];
+    specs.forEach(([min, max, step], part) => {
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = String(min); slider.max = String(max); slider.step = String(step);
+      slider.dataset.settingSlider = field.key; slider.dataset.part = String(part);
+      slider.setAttribute("aria-label", `${fieldLabel(field)}${specs.length > 1 ? ` ${part + 1}` : ""}`);
+      slider.addEventListener("input", () => {
+        if (field.key === "density") {
+          const pair = Array.from(row.querySelectorAll('input[type="range"]'));
+          if (Number(pair[0].value) > Number(pair[1].value)) pair[1 - part].value = slider.value;
+          input.value = pair.map(s => Number(s.value).toFixed(2)).join("-");
+        } else { input.value = slider.value; }
+      });
+      row.append(slider);
+    });
+    input.addEventListener("input", syncSettingSliders);
+
     row.addEventListener("mouseenter", () => showHelp(field, row));
     row.addEventListener("mouseleave", () => showHelp(null, null));
     input.addEventListener("focus", () => showHelp(field, row));
     input.addEventListener("blur", () => showHelp(null, null));
     els.fields.append(row);
   }
+  syncSettingSliders();
   buildZoomRow();
 }
 
@@ -971,6 +1016,7 @@ function fillFromText(text) {
     const value = values.has(input.dataset.key) ? values.get(input.dataset.key) : "";
     input.value = value;
   }
+  syncSettingSliders();
 }
 
 function readSaved() {
@@ -1167,6 +1213,12 @@ function applyLanguageToDom() {
       const field = (ui.fields || []).find((f) => f.key === key);
       if (field && label) label.textContent = fieldLabel(field);
       if (field && input) input.title = fieldHelp(field);
+      if (field) {
+        const sliders = row.querySelectorAll("input[data-setting-slider]");
+        sliders.forEach((slider, part) => {
+          slider.setAttribute("aria-label", `${fieldLabel(field)}${sliders.length > 1 ? ` ${part + 1}` : ""}`);
+        });
+      }
     }
   }
 }

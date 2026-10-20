@@ -20,14 +20,15 @@ use std::time::Duration;
 use crate::clock::{now_ms, Timer};
 use crate::config::Settings;
 use crate::model::{
-    clue_is_showable, clue_of, largest_blank_region, largest_clueless_region, validate, Clue,
-    Grid, Puzzle, BLACK, ORTHO, UNKNOWN, WHITE,
+    clue_is_showable, clue_of, largest_blank_region, largest_clueless_region, one_step_deductions,
+    validate, Clue, Grid, Puzzle, BLACK, ORTHO, UNKNOWN, WHITE,
 };
 use crate::rng::Rng;
 use crate::solver::{SolveLimits, Solver};
 
 pub struct GenConfig {
     pub w: usize,
+    pub difficulty: usize,
     pub h: usize,
     pub max_attempts: usize,
     /// Fraction of the grid that should become black.
@@ -104,6 +105,7 @@ impl GenConfig {
         GenConfig {
             w,
             h,
+            difficulty: 3,
             max_attempts: 200,
             black_lo: 0.50,
             black_hi: 0.60,
@@ -121,6 +123,7 @@ impl GenConfig {
         let area = settings.size * settings.size;
         GenConfig {
             w: settings.size,
+            difficulty: settings.difficulty,
             h: settings.size,
             max_attempts: settings.max_attempts,
             black_lo: settings.density_lo,
@@ -227,10 +230,39 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         // the intermediate puzzles are dense, so refuting them is quick, while
         // the adding direction spends its time on near-unique puzzles, which is
         // exactly where the search is expensive.
-        let (clues, removals, nodes_used, solve_time, checks, max_check_nodes) =
-            minimise(&grid, &candidates, &start, cfg, rng, &mut budget);
-        spent_nodes += nodes_used;
-        spent_time += solve_time;
+        let mut best = None;
+        let mut best_score = None;
+        let mut removals = 0;
+        let mut checks = 0;
+        let mut max_check_nodes = 0;
+        for order in 0..cfg.difficulty.max(1) {
+            if budget.exhausted() {
+                break;
+            }
+            let remaining = (cfg.difficulty.max(1) - order) as u64;
+            let mut local = Budget {
+                nodes: budget.nodes / remaining,
+                deadline: budget
+                    .deadline
+                    .map(|end| now_ms() + (end - now_ms()).max(0.0) / remaining as f64),
+                slack: budget.slack,
+                min_nodes: budget.min_nodes,
+            };
+            let (clues, removed, nodes, time, count, peak) =
+                minimise(&grid, &candidates, &start, cfg, rng, &mut local);
+            budget.spend(nodes);
+            spent_nodes += nodes;
+            spent_time += time;
+            checks += count;
+            max_check_nodes = max_check_nodes.max(peak);
+            let score = difficulty_score(&grid, &clues);
+            if best_score.map_or(true, |previous| score > previous) {
+                best_score = Some(score);
+                best = Some(clues);
+                removals = removed;
+            }
+        }
+        let clues = best.unwrap_or_else(|| candidates.clone());
         let clue_count = clues.len();
         let blank_region = blank_region(&grid, &solution, &clues);
         let black_count = solution.iter().filter(|&&c| c == BLACK).count();
@@ -262,6 +294,21 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         });
     }
     None
+}
+
+/// Prefer unresolved cells after deterministic deductions, then fewer givens.
+fn difficulty_score(grid: &Grid, clues: &[(usize, Clue)]) -> (usize, usize) {
+    let mut state = vec![UNKNOWN; grid.len()];
+    for (cell, _) in clues {
+        state[*cell] = WHITE;
+    }
+    for (cell, value) in one_step_deductions(grid, &state, clues) {
+        state[cell] = value;
+    }
+    (
+        state.iter().filter(|&&v| v == UNKNOWN).count(),
+        grid.len() - clues.len(),
+    )
 }
 
 /// How many of the orthogonal neighbours of `cell` are already black.
@@ -587,7 +634,7 @@ mod tests {
 
     #[test]
     fn one_step_deductions_match_the_solution() {
-        use crate::model::{clue_deductions, UNKNOWN, WHITE};
+        use crate::model::{one_step_deductions, UNKNOWN, WHITE};
         let mut rng = Rng::new(2024);
         let cfg = GenConfig::for_size(20, 20);
         let result = generate_with(&mut rng, &cfg).expect("generation failed");
@@ -597,7 +644,7 @@ mod tests {
         for (i, _) in puzzle.clues.iter() {
             marks[*i] = WHITE;
         }
-        let deduced = clue_deductions(&puzzle.grid, &marks, &puzzle.clues);
+        let deduced = one_step_deductions(&puzzle.grid, &marks, &puzzle.clues);
         println!("one step from a fresh board filled {} cells", deduced.len());
         for (cell, value) in &deduced {
             assert_eq!(
@@ -610,11 +657,31 @@ mod tests {
         for (cell, value) in &deduced {
             marks[*cell] = *value;
         }
-        let more = clue_deductions(&puzzle.grid, &marks, &puzzle.clues);
+        let more = one_step_deductions(&puzzle.grid, &marks, &puzzle.clues);
         for (cell, value) in &more {
             assert_eq!(*value, puzzle.solution[*cell]);
         }
         println!("second step filled {} more", more.len());
+    }
+
+    #[test]
+    fn difficulty_selection_prefers_less_basic_progress() {
+        let mut improved = 0;
+        for seed in 1..=12 {
+            let mut cfg = GenConfig::for_size(10, 10);
+            cfg.node_budget = u64::MAX;
+            cfg.time_budget = Duration::ZERO;
+            cfg.difficulty = 1;
+            let baseline = generate_with(&mut Rng::new(seed), &cfg).unwrap();
+            cfg.difficulty = 3;
+            let selected = generate_with(&mut Rng::new(seed), &cfg).unwrap();
+            let before = difficulty_score(&baseline.puzzle.grid, &baseline.puzzle.clues);
+            let after = difficulty_score(&selected.puzzle.grid, &selected.puzzle.clues);
+            assert!(after >= before, "seed {seed}: {before:?} -> {after:?}");
+            improved += usize::from(after.0 > before.0);
+            println!("seed {seed}: unresolved {} -> {}", before.0, after.0);
+        }
+        assert!(improved > 0);
     }
 
     #[test]

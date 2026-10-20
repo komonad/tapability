@@ -163,7 +163,27 @@ async function main() {
     JSON.stringify(summary.genStats),
   );
   check("canvas has a backing store", summary.canvasW > 100, String(summary.canvasW));
-  check("settings column has every field", summary.fields === 9, String(summary.fields));
+  check("settings column has every field", summary.fields === 10, String(summary.fields));
+
+  const guideLayout = await evaluate(`(() => {
+    const guide = document.querySelector('.guide');
+    const stage = document.getElementById('stage').getBoundingClientRect();
+    const board = document.getElementById('board').getBoundingClientRect();
+    const bounds = guide.getBoundingClientRect();
+    return { left: bounds.right <= stage.left, hasIntro: guide.contains(document.getElementById('intro')),
+      hasHelp: guide.contains(document.getElementById('help')),
+      centered: Math.abs((board.left + board.right) - (stage.left + stage.right)) < 3 };
+  })()`);
+  check("rules and help occupy the left column", guideLayout.left && guideLayout.hasIntro && guideLayout.hasHelp, JSON.stringify(guideLayout));
+  check("the board is centered in its stage", guideLayout.centered, JSON.stringify(guideLayout));
+  const sliderSync = await evaluate(`(() => {
+    const slider = document.querySelector('[data-setting-slider="difficulty"]');
+    slider.value = '5'; slider.dispatchEvent(new Event('input', {bubbles:true}));
+    const changed = document.getElementById('f-difficulty').value;
+    fillFromText(ui.state.settingsText);
+    return {changed, restored: slider.value};
+  })()`);
+  check("difficulty slider updates its field and restores settings", sliderSync.changed === '5' && sliderSync.restored === '3', JSON.stringify(sliderSync));
 
   // ---- language: Simplified Chinese by default, switchable, remembered ----
   const zh = await evaluate(`({
@@ -171,7 +191,7 @@ async function main() {
     select: document.getElementById("lang").value,
     intro: document.getElementById("intro").textContent.trim(),
     newButton: document.querySelector("#btn-new span").textContent.trim(),
-    panelTitle: document.querySelector(".panel-title").textContent.trim(),
+    panelTitle: document.querySelector(".panel .panel-title").textContent.trim(),
     status: document.getElementById("status").textContent,
     stats: document.getElementById("stats").textContent,
     saved: localStorage.getItem("tapa.lang"),
@@ -181,7 +201,7 @@ async function main() {
     zh.htmlLang === "zh-CN" && zh.select === "zh-CN",
     JSON.stringify({ lang: zh.htmlLang, select: zh.select }),
   );
-  check("a rules introduction sits under the title", zh.intro.length > 40, zh.intro);
+  check("the rules introduction is available", zh.intro.length > 40, zh.intro);
   check("the introduction is in Chinese", /[\u4e00-\u9fff]/.test(zh.intro), zh.intro);
   check("the introduction describes the rules", /数字|黑格/.test(zh.intro), zh.intro);
   check("buttons are translated", zh.newButton === "新题目", zh.newButton);

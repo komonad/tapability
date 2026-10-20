@@ -354,6 +354,101 @@ pub fn clue_deductions(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> Ve
     }
 }
 
+/// Apply structural rules before clue propagation, repeating until stable.
+/// Only unknown cells are returned; existing marks remain unchanged.
+pub fn one_step_deductions(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> Vec<(usize, u8)> {
+    let mut state = marks.to_vec();
+    for (cell, _) in clues {
+        state[*cell] = WHITE;
+    }
+    loop {
+        let before = state.clone();
+        for y in 0..grid.h.saturating_sub(1) {
+            for x in 0..grid.w.saturating_sub(1) {
+                let quad = [
+                    grid.idx(x, y),
+                    grid.idx(x + 1, y),
+                    grid.idx(x, y + 1),
+                    grid.idx(x + 1, y + 1),
+                ];
+                if quad.iter().filter(|&&i| state[i] == BLACK).count() == 3 {
+                    for i in quad {
+                        if state[i] == UNKNOWN {
+                            state[i] = WHITE;
+                        }
+                    }
+                }
+            }
+        }
+        for cell in connection_bridges(grid, &state) {
+            state[cell] = BLACK;
+        }
+        for (cell, value) in clue_deductions(grid, &state, clues) {
+            state[cell] = value;
+        }
+        if state == before {
+            break;
+        }
+    }
+    state
+        .iter()
+        .enumerate()
+        .filter(|&(i, &v)| {
+            marks[i] == UNKNOWN && v != UNKNOWN && !clues.iter().any(|(c, _)| *c == i)
+        })
+        .map(|(i, &v)| (i, v))
+        .collect()
+}
+
+/// Unknown vertices whose removal separates existing black cells are mandatory.
+fn connection_bridges(grid: &Grid, state: &[u8]) -> Vec<usize> {
+    let blacks: Vec<usize> = (0..state.len()).filter(|&i| state[i] == BLACK).collect();
+    if blacks.len() < 2 {
+        return Vec::new();
+    }
+    let mut seen = vec![false; state.len()];
+    let mut stack = Vec::with_capacity(state.len());
+    let mut connected_without = |blocked: usize| {
+        seen.fill(false);
+        stack.clear();
+        stack.push(blacks[0]);
+        seen[blacks[0]] = true;
+        let mut reached = 0;
+        while let Some(cell) = stack.pop() {
+            if state[cell] == BLACK {
+                reached += 1;
+            }
+            if reached == blacks.len() {
+                return true;
+            }
+            for &nb in grid.ortho(cell).iter().flatten() {
+                if nb != blocked && state[nb] != WHITE && !seen[nb] {
+                    seen[nb] = true;
+                    stack.push(nb);
+                }
+            }
+        }
+        false
+    };
+    // Disconnected input cannot justify any bridge assignment.
+    if !connected_without(usize::MAX) {
+        return Vec::new();
+    }
+    (0..state.len())
+        .filter(|&i| {
+            state[i] == UNKNOWN
+                && grid
+                    .ortho(i)
+                    .iter()
+                    .flatten()
+                    .filter(|&&j| state[j] != WHITE)
+                    .count()
+                    >= 2
+                && !connected_without(i)
+        })
+        .collect()
+}
+
 /// Human readable clue, e.g. `1` or `12` for the clue `[1, 2]`.
 pub fn clue_text(clue: &[u8]) -> String {
     if clue.is_empty() {
@@ -917,7 +1012,7 @@ mod tests {
     }
 
     #[test]
-    fn one_step_deductions() {
+    fn clue_only_deductions() {
         // 3x3, clue "1" at the centre. Marking one neighbour empty leaves
         // exactly one place for the single wall: the opposite one.
         let grid = Grid::new(3, 3);
@@ -944,6 +1039,76 @@ mod tests {
         }
         let found = clue_deductions(&grid, &marks, &clues);
         assert!(found.contains(&(1, BLACK)) || found.contains(&(3, BLACK)));
+    }
+
+    #[test]
+    fn structural_steps_mark_every_three_black_square() {
+        let grid = Grid::new(3, 2);
+        let marks = vec![BLACK, BLACK, BLACK, UNKNOWN, BLACK, UNKNOWN];
+        let found = one_step_deductions(&grid, &marks, &[]);
+        assert_eq!(found, vec![(3, WHITE), (5, WHITE)]);
+        assert!(one_step_deductions(&grid, &[BLACK; 6], &[]).is_empty());
+    }
+
+    #[test]
+    fn bridges_require_black_cells_on_both_sides() {
+        let grid = Grid::new(5, 1);
+        assert_eq!(
+            one_step_deductions(&grid, &[BLACK, UNKNOWN, UNKNOWN, UNKNOWN, BLACK], &[]),
+            vec![(1, BLACK), (2, BLACK), (3, BLACK)]
+        );
+        assert!(
+            one_step_deductions(&grid, &[BLACK, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN], &[])
+                .is_empty()
+        );
+        assert!(
+            one_step_deductions(&grid, &[BLACK, UNKNOWN, WHITE, UNKNOWN, BLACK], &[]).is_empty()
+        );
+        let grid = Grid::new(3, 3);
+        let mut marks = vec![UNKNOWN; 9];
+        marks[0] = BLACK;
+        marks[8] = BLACK;
+        assert!(one_step_deductions(&grid, &marks, &[]).is_empty());
+    }
+
+    #[test]
+    fn square_rules_feed_bridge_deductions() {
+        let grid = Grid::new(3, 2);
+        let marks = vec![BLACK, BLACK, UNKNOWN, BLACK, UNKNOWN, BLACK];
+        let found = one_step_deductions(&grid, &marks, &[]);
+        assert!(found.contains(&(4, WHITE)));
+        assert!(found.contains(&(2, BLACK)));
+    }
+
+    #[test]
+    fn structural_deductions_agree_with_small_valid_boards() {
+        let grid = Grid::new(3, 3);
+        for mask in 1..512 {
+            let solution: Vec<u8> = (0..9)
+                .map(|i| if mask & (1 << i) != 0 { BLACK } else { WHITE })
+                .collect();
+            if !validate(&grid, &solution, &[]).is_empty() {
+                continue;
+            }
+            for visible in 0..512 {
+                let marks: Vec<u8> = (0..9)
+                    .map(|i| {
+                        if visible & (1 << i) != 0 {
+                            solution[i]
+                        } else {
+                            UNKNOWN
+                        }
+                    })
+                    .collect();
+                for (cell, value) in one_step_deductions(&grid, &marks, &[]) {
+                    assert_eq!(
+                        value, solution[cell],
+                        "solution {mask}, visible {visible}, cell {cell}"
+                    );
+                    assert_eq!(marks[cell], UNKNOWN);
+                }
+            }
+        }
     }
 
     #[test]
