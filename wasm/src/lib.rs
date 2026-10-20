@@ -388,7 +388,7 @@ impl Engine {
         );
     }
 
-    /// Fill in everything the structural and clue rules force, given the current marks.
+    /// Apply one round using only the board visible when the command starts.
     fn one_step(&mut self) {
         if self.show_solution {
             return;
@@ -414,7 +414,7 @@ impl Engine {
             "one_step_filled",
             &[applied as i64],
             format!(
-                "One step: filled {applied} cell{} the rules force.",
+                "One round: filled {applied} cell{} from the current board.",
                 if applied == 1 { "" } else { "s" }
             ),
         );
@@ -962,6 +962,30 @@ mod tests {
     }
 
     #[test]
+    fn one_step_stops_before_using_new_marks_as_premises() {
+        let mut engine = Engine::new();
+        engine.puzzle = Some(Puzzle::new(
+            tapa_core::model::Grid::new(4, 2),
+            vec![(0, vec![3]), (2, vec![2])],
+            vec![WHITE, BLACK, WHITE, WHITE, BLACK, BLACK, WHITE, WHITE],
+            0,
+        ));
+        engine.cells = vec![
+            WHITE, UNKNOWN, WHITE, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN,
+        ];
+        engine.wrong = vec![false; 8];
+        engine.command("onestep").unwrap();
+        assert_eq!(engine.status_args, vec![3]);
+        assert_eq!(
+            engine.cells,
+            vec![WHITE, BLACK, WHITE, UNKNOWN, BLACK, BLACK, UNKNOWN, UNKNOWN]
+        );
+        engine.command("onestep").unwrap();
+        assert_eq!(engine.status_args, vec![3]);
+        assert_eq!(engine.cells, engine.puzzle.as_ref().unwrap().solution);
+    }
+
+    #[test]
     fn check_marks_wrong_cells_only() {
         let mut engine = engine_with_puzzle(8, 5);
         let puzzle = engine.puzzle.as_ref().unwrap();
@@ -1037,7 +1061,13 @@ mod tests {
     #[test]
     fn a_tap_on_a_clue_steps_it_instead_of_marking_it() {
         let mut engine = engine_with_puzzle(10, 22);
-        let clue = engine.puzzle.as_ref().unwrap().clues[0].0;
+        let puzzle = engine.puzzle.as_ref().unwrap();
+        let clue = puzzle
+            .clues
+            .iter()
+            .find(|(cell, clue)| !clue_step(&puzzle.grid, &engine.cells, *cell, clue).is_empty())
+            .map(|(cell, _)| *cell)
+            .expect("a clue with an immediate deduction");
         let (x, y) = engine.puzzle.as_ref().unwrap().grid.xy(clue);
         let before = engine.cells.clone();
 

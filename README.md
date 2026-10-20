@@ -98,13 +98,16 @@ The status bar adds `red = rule broken` whenever something is flagged.
 
 ## One step
 
-There are two granularities. **Middle-clicking a clue cell** applies the rule to
-that single clue once - no cascading - which is handy for poking at one number.
-The **One step (D)** button first marks the remaining cell of every 2x2
-with three black cells as white. It then fills unknown connection cells whose
-removal would separate existing black cells, and applies the clue rule. These
-rules repeat to a fixpoint. All deductions are undoable together. A single black
-component does not force an exit unless another black component needs it.
+**Middle-clicking a clue cell** applies that clue once. Compatible neighbour
+patterns must agree with every known black and white cell; cells with the same
+value in every surviving pattern are confirmed.
+
+The **One step (D)** button reads one immutable board snapshot. It checks
+2x2 squares, mandatory connections between black components and the compatible
+patterns of every clue against that same snapshot. A round may confirm several
+cells, but new marks do not trigger more deductions until the next click. Each
+resulting mark is undoable. Internal difficulty assessment uses a separate
+basic-rule closure that repeats until stable.
 
 ## Controls and settings in the UI
 
@@ -333,8 +336,9 @@ solution *found and proven* (not "aborted by budget") means unique.
    Growth is aimed at the white area currently furthest from the tree, and while
    any border is still untouched it is aimed at that border instead, so the
    black region always reaches all four edges rather than floating in a white
-   margin. Black density is 50-60%, which keeps the leftover white patches
-   small.
+   margin. Equally suitable growth goals and extensions use reservoir sampling,
+   giving every tied candidate the same probability regardless of iteration
+   order. Black density is 50-60%, which keeps leftover white patches small.
 2. **take the maximal clue set**: every white cell that touches black becomes a
    clue, except cells whose clue would be 8. If this set does not already have a
    unique solution, the shape is unusable (subsets are only weaker) and a new

@@ -1,7 +1,7 @@
 //! Bounded logical assessment: basic rules followed by one-cell contradiction tests.
 use crate::{
     clock::now_ms,
-    model::{clue_step, one_step_deductions, Clue, Grid, BLACK, UNKNOWN, WHITE},
+    model::{clue_step, deduction_closure, Clue, Grid, BLACK, UNKNOWN, WHITE},
     solver::Solver,
 };
 
@@ -47,7 +47,7 @@ pub fn assess(
         .filter(|&&v| v != UNKNOWN)
         .count()
         .saturating_sub(clues.len());
-    for (cell, value) in one_step_deductions(grid, &state, clues) {
+    for (cell, value) in deduction_closure(grid, &state, clues) {
         state[cell] = value;
     }
     let basic_remaining = state.iter().filter(|&&v| v == UNKNOWN).count();
@@ -82,7 +82,7 @@ pub fn assess(
             }
             if black_ok != white_ok {
                 state = if black_ok { black } else { white };
-                for (cell, value) in one_step_deductions(grid, &state, clues) {
+                for (cell, value) in deduction_closure(grid, &state, clues) {
                     state[cell] = value;
                 }
                 steps += 1;

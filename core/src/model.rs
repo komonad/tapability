@@ -370,9 +370,60 @@ pub fn clue_deductions(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> Ve
     }
 }
 
-/// Apply structural rules before clue propagation, repeating until stable.
-/// Only unknown cells are returned; existing marks remain unchanged.
+/// Infer one parallel round from an immutable board snapshot.
+/// New consequences do not become premises until the next round.
 pub fn one_step_deductions(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> Vec<(usize, u8)> {
+    let mut snapshot = marks.to_vec();
+    for (cell, _) in clues {
+        snapshot[*cell] = WHITE;
+    }
+    let mut proposed = vec![UNKNOWN; grid.len()];
+    let mut conflicts = vec![false; grid.len()];
+    let mut propose = |cell: usize, value: u8| {
+        if snapshot[cell] != UNKNOWN {
+            return;
+        }
+        if proposed[cell] != UNKNOWN && proposed[cell] != value {
+            conflicts[cell] = true;
+        }
+        proposed[cell] = value;
+    };
+    for y in 0..grid.h.saturating_sub(1) {
+        for x in 0..grid.w.saturating_sub(1) {
+            let quad = [
+                grid.idx(x, y),
+                grid.idx(x + 1, y),
+                grid.idx(x, y + 1),
+                grid.idx(x + 1, y + 1),
+            ];
+            if quad.iter().filter(|&&i| snapshot[i] == BLACK).count() == 3 {
+                for i in quad {
+                    if snapshot[i] == UNKNOWN {
+                        propose(i, WHITE);
+                    }
+                }
+            }
+        }
+    }
+    for cell in connection_bridges(grid, &snapshot) {
+        propose(cell, BLACK);
+    }
+    for (cell, clue) in clues {
+        for (index, value) in clue_step(grid, &snapshot, *cell, clue) {
+            propose(index, value);
+        }
+    }
+    proposed
+        .into_iter()
+        .enumerate()
+        .filter(|&(cell, value)| value != UNKNOWN && !conflicts[cell])
+        .collect()
+}
+
+/// Apply basic structural and clue deductions until no further cells change.
+/// This closure is used for logical assessment and candidate screening.
+/// Only unknown cells are returned; existing marks remain unchanged.
+pub fn deduction_closure(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> Vec<(usize, u8)> {
     let mut state = marks.to_vec();
     for (cell, _) in clues {
         state[*cell] = WHITE;
@@ -1180,12 +1231,18 @@ mod tests {
     }
 
     #[test]
-    fn square_rules_feed_bridge_deductions() {
+    fn square_and_bridge_consequences_use_separate_snapshots() {
         let grid = Grid::new(3, 2);
         let marks = vec![BLACK, BLACK, UNKNOWN, BLACK, UNKNOWN, BLACK];
         let found = one_step_deductions(&grid, &marks, &[]);
-        assert!(found.contains(&(4, WHITE)));
-        assert!(found.contains(&(2, BLACK)));
+        assert_eq!(found, vec![(4, WHITE)]);
+        let mut next = marks.clone();
+        next[4] = WHITE;
+        assert_eq!(one_step_deductions(&grid, &next, &[]), vec![(2, BLACK)]);
+        assert_eq!(
+            deduction_closure(&grid, &marks, &[]),
+            vec![(2, BLACK), (4, WHITE)]
+        );
     }
 
     #[test]
@@ -1217,6 +1274,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn one_round_does_not_cascade_between_clues() {
+        let grid = Grid::new(4, 2);
+        let clues = vec![(0, vec![3]), (2, vec![2])];
+        let marks = vec![
+            WHITE, UNKNOWN, WHITE, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN,
+        ];
+        let first = one_step_deductions(&grid, &marks, &clues);
+        assert_eq!(first, vec![(1, BLACK), (4, BLACK), (5, BLACK)]);
+        let mut reversed = clues.clone();
+        reversed.reverse();
+        assert_eq!(one_step_deductions(&grid, &marks, &reversed), first);
+        let mut next = marks.clone();
+        for (cell, value) in first {
+            next[cell] = value;
+        }
+        assert_eq!(
+            one_step_deductions(&grid, &next, &clues),
+            vec![(3, WHITE), (6, WHITE), (7, WHITE)]
+        );
+        assert_eq!(marks[1], UNKNOWN);
+    }
+
+    #[test]
+    fn contradictory_clue_consequences_do_not_assign_an_arbitrary_value() {
+        let grid = Grid::new(3, 1);
+        let marks = vec![WHITE, UNKNOWN, WHITE];
+        let clues = vec![(0, vec![1]), (2, vec![])];
+        assert!(one_step_deductions(&grid, &marks, &clues).is_empty());
+    }
+
+    #[test]
+    fn clue_patterns_use_existing_walls_to_confirm_multiple_cells() {
+        let grid = Grid::new(4, 2);
+        let marks = vec![
+            UNKNOWN, BLACK, WHITE, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN,
+        ];
+        let mut step = clue_step(&grid, &marks, 2, &vec![2]);
+        step.sort();
+        assert_eq!(step, vec![(3, WHITE), (5, BLACK), (6, WHITE), (7, WHITE)]);
+        assert_eq!(one_step_deductions(&grid, &marks, &[(2, vec![2])]), step);
     }
 
     #[test]

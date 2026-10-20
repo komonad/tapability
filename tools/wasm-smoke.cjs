@@ -120,7 +120,7 @@ function decided(state) {
 const step = call("onestep");
 const filled = decided(step);
 check("one step fills cells", filled > 0, `${filled} decided`);
-check("one step status", /One step/.test(step.status), step.status);
+check("one step status", step.statusKey === "one_step_filled", step.status);
 const met = [...step.doneClues].filter((c) => c === "1").length;
 check("one step meets the numbers of some clues", met > 0, `${met} greyed out`);
 check(

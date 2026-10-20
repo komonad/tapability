@@ -11,7 +11,7 @@ use tapa_core::{
     config::Settings,
     difficulty,
     generator::{generate_with, GenConfig},
-    model::{clue_step, one_step_deductions, validate, Clue, Grid, BLACK, UNKNOWN, WHITE},
+    model::{clue_step, deduction_closure, validate, Clue, Grid, BLACK, UNKNOWN, WHITE},
     rng::Rng,
     solver::{SolveLimits, Solver},
 };
@@ -28,7 +28,7 @@ fn assess(label: &str, grid: &Grid, clues: &[(usize, Clue)], generation_ms: f64)
         }
     }
     let first = initial.iter().filter(|&&v| v != UNKNOWN).count() - clues.len();
-    for (cell, value) in one_step_deductions(grid, &marks, clues) {
+    for (cell, value) in deduction_closure(grid, &marks, clues) {
         marks[cell] = value;
     }
     let remaining = marks.iter().filter(|&&v| v == UNKNOWN).count();

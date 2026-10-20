@@ -23,9 +23,8 @@ use crate::clock::{generation_progress, now_ms, Timer};
 use crate::config::Settings;
 use crate::difficulty;
 use crate::model::{
-    clue_is_showable, clue_of, clue_step, feasible_masks, largest_blank_region,
-    largest_clueless_region, one_step_deductions, validate, Clue, Grid, Puzzle, BLACK, ORTHO,
-    UNKNOWN, WHITE,
+    clue_is_showable, clue_of, clue_step, deduction_closure, feasible_masks, largest_blank_region,
+    largest_clueless_region, validate, Clue, Grid, Puzzle, BLACK, ORTHO, UNKNOWN, WHITE,
 };
 use crate::rng::Rng;
 use crate::solver::{SolveLimits, Solver};
@@ -369,7 +368,7 @@ fn repair_logical_path(
         }
         let playable = grid.len().saturating_sub(clues.len());
         let basic_remaining =
-            playable.saturating_sub(one_step_deductions(grid, &opening, clues).len());
+            playable.saturating_sub(deduction_closure(grid, &opening, clues).len());
         if grid.len() >= 225
             && basic_remaining < difficulty::minimum_basic_remaining(grid, clues.len())
         {
@@ -418,7 +417,7 @@ fn repair_logical_path(
             }
             let free = grid.len().saturating_sub(trial.len());
             let unresolved =
-                free.saturating_sub(one_step_deductions(grid, &trial_opening, &trial).len());
+                free.saturating_sub(deduction_closure(grid, &trial_opening, &trial).len());
             if unresolved >= difficulty::minimum_basic_remaining(grid, trial.len()) {
                 chosen = Some((cell, clue));
                 break;
@@ -626,23 +625,43 @@ fn random_solution(rng: &mut Rng, grid: &Grid, target: usize) -> Option<Vec<u8>>
         // "furthest away" goal, so growth is pulled into every border.
         let mut goal = None;
         let mut best_distance = 0u32;
+        // Reservoir sampling gives tied goals equal probability regardless of scan order.
+        let mut goal_ties = 0;
         if require_edges {
             for i in 0..n {
                 if cells[i] != WHITE || !on_untouched_edge(grid, &cells, i) {
                     continue;
                 }
-                if distance[i] != u32::MAX && distance[i] > best_distance {
+                if distance[i] == u32::MAX {
+                    continue;
+                }
+                if distance[i] > best_distance {
                     best_distance = distance[i];
                     goal = Some(i);
+                    goal_ties = 1;
+                } else if distance[i] == best_distance {
+                    goal_ties += 1;
+                    if rng.below(goal_ties) == 0 {
+                        goal = Some(i);
+                    }
                 }
             }
         }
         // otherwise the white cell that is furthest away decides
         if goal.is_none() {
             for i in 0..n {
-                if cells[i] == WHITE && distance[i] != u32::MAX && distance[i] > best_distance {
+                if cells[i] != WHITE || distance[i] == u32::MAX {
+                    continue;
+                }
+                if distance[i] > best_distance {
                     best_distance = distance[i];
                     goal = Some(i);
+                    goal_ties = 1;
+                } else if distance[i] == best_distance {
+                    goal_ties += 1;
+                    if rng.below(goal_ties) == 0 {
+                        goal = Some(i);
+                    }
                 }
             }
         }
@@ -651,15 +670,22 @@ fn random_solution(rng: &mut Rng, grid: &Grid, target: usize) -> Option<Vec<u8>>
         // among the legal tree extensions, take the one closest to that goal
         let mut choice = None;
         let mut best_gap = i32::MAX;
+        let mut extension_ties = 0;
         for &b in blacks.iter() {
             for nb in grid.ortho(b).iter().flatten() {
                 if cells[*nb] != WHITE || black_neighbors(&cells, grid, *nb) != 1 {
                     continue;
                 }
-                let gap = chebyshev(grid, *nb, goal);
-                if gap < best_gap || (gap == best_gap && rng.below(3) == 0) {
+                let gap = manhattan(grid, *nb, goal);
+                if gap < best_gap {
                     best_gap = gap;
                     choice = Some(*nb);
+                    extension_ties = 1;
+                } else if gap == best_gap {
+                    extension_ties += 1;
+                    if rng.below(extension_ties) == 0 {
+                        choice = Some(*nb);
+                    }
                 }
             }
         }
@@ -697,17 +723,73 @@ fn on_untouched_edge(grid: &Grid, cells: &[u8], i: usize) -> bool {
     on_top || on_bottom || on_left || on_right
 }
 
-/// Chebyshev distance between two cells.
-fn chebyshev(grid: &Grid, a: usize, b: usize) -> i32 {
+/// Manhattan distance between two cells.
+fn manhattan(grid: &Grid, a: usize, b: usize) -> i32 {
     let (ax, ay) = grid.xy(a);
     let (bx, by) = grid.xy(b);
-    (ax as i32 - bx as i32).abs().max((ay as i32 - by as i32).abs())
+    (ax as i32 - bx as i32).abs() + (ay as i32 - by as i32).abs()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::solver::Solver;
+
+    #[test]
+    fn shape_growth_has_no_preferred_edge_or_quadrant() {
+        let grid = Grid::new(20, 20);
+        let mut edges = [0usize; 4];
+        let mut quadrants = [0usize; 4];
+        let mut samples = 0;
+        let mut diagonals = 0;
+        let mut total_black = 0;
+        for seed in 1..=400 {
+            let Some(cells) = random_solution(&mut Rng::new(seed), &grid, 220) else {
+                continue;
+            };
+            assert!(validate(&grid, &cells, &[]).is_empty());
+            samples += 1;
+            for offset in 0..20 {
+                for (edge, cell) in [
+                    grid.idx(offset, 0),
+                    grid.idx(offset, 19),
+                    grid.idx(0, offset),
+                    grid.idx(19, offset),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    edges[edge] += usize::from(cells[cell] == BLACK);
+                }
+            }
+            for (cell, &value) in cells.iter().enumerate() {
+                let (x, y) = grid.xy(cell);
+                let black = usize::from(value == BLACK);
+                quadrants[y / 10 * 2 + x / 10] += black;
+                total_black += black;
+                if x == y || x + y == 19 {
+                    diagonals += black;
+                }
+            }
+        }
+        assert!(samples >= 380);
+        let diagonal_rate = diagonals as f64 / (samples * 40) as f64;
+        let overall_rate = total_black as f64 / (samples * 400) as f64;
+        assert!(
+            (diagonal_rate - overall_rate).abs() < 0.06,
+            "diagonal {diagonal_rate}, overall {overall_rate}"
+        );
+        let edge_spread = edges.iter().max().unwrap() - edges.iter().min().unwrap();
+        let quadrant_spread = quadrants.iter().max().unwrap() - quadrants.iter().min().unwrap();
+        assert!(
+            edge_spread * 100 < samples * 20 * 3,
+            "edge counts: {edges:?}"
+        );
+        assert!(
+            quadrant_spread * 100 < samples * 100 * 3,
+            "quadrant counts: {quadrants:?}"
+        );
+    }
 
     fn check_generated(w: usize, h: usize, seed: u64, strict_minimal: bool) {
         let mut rng = Rng::new(seed);
@@ -776,8 +858,8 @@ mod tests {
     }
 
     #[test]
-    fn one_step_deductions_match_the_solution() {
-        use crate::model::{one_step_deductions, UNKNOWN, WHITE};
+    fn deduction_closure_matches_the_solution() {
+        use crate::model::{deduction_closure, UNKNOWN, WHITE};
         let mut rng = Rng::new(2024);
         let cfg = GenConfig::for_size(20, 20);
         let result = generate_with(&mut rng, &cfg).expect("generation failed");
@@ -787,8 +869,8 @@ mod tests {
         for (i, _) in puzzle.clues.iter() {
             marks[*i] = WHITE;
         }
-        let deduced = one_step_deductions(&puzzle.grid, &marks, &puzzle.clues);
-        println!("one step from a fresh board filled {} cells", deduced.len());
+        let deduced = deduction_closure(&puzzle.grid, &marks, &puzzle.clues);
+        println!("basic deduction closure filled {} cells", deduced.len());
         for (cell, value) in &deduced {
             assert_eq!(
                 *value, puzzle.solution[*cell],
@@ -800,11 +882,11 @@ mod tests {
         for (cell, value) in &deduced {
             marks[*cell] = *value;
         }
-        let more = one_step_deductions(&puzzle.grid, &marks, &puzzle.clues);
+        let more = deduction_closure(&puzzle.grid, &marks, &puzzle.clues);
         for (cell, value) in &more {
             assert_eq!(*value, puzzle.solution[*cell]);
         }
-        println!("second step filled {} more", more.len());
+        println!("repeated closure filled {} more", more.len());
     }
 
     #[test]

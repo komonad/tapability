@@ -41,6 +41,7 @@ try {
 
     Write-Host "checking the engine without a browser..." -ForegroundColor Cyan
     node (Join-Path $root "tools\wasm-smoke.cjs")
+    if ($LASTEXITCODE -ne 0) { throw "WebAssembly ABI smoke checks failed" }
 
     Write-Host ""
     Write-Host "Serve the page over HTTP (WebAssembly cannot be fetched from file://):" -ForegroundColor Cyan
