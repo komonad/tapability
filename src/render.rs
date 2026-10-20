@@ -575,15 +575,21 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
             }
 
             if !app.show_solution {
-                let mut focus = vec![false; n];
+                let mut walls = vec![false; n];
+                let mut area = vec![false; n];
                 for &idx in &app.hint_focus {
                     if idx < n {
-                        focus[idx] = true;
+                        if app.cells[idx] == BLACK {
+                            walls[idx] = true;
+                        } else {
+                            area[idx] = true;
+                        }
                     }
                 }
                 for &idx in &app.hint_focus {
                     if idx < n {
-                        outline_cell(hdc, g, puzzle, &focus, g.pen_highlight, idx);
+                        let focus = if walls[idx] { &walls } else { &area };
+                        outline_cell(hdc, g, puzzle, focus, g.pen_highlight, idx);
                     }
                 }
             }

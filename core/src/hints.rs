@@ -359,6 +359,35 @@ pub struct ProofMetrics {
 }
 
 impl Hint {
+    /// Connectivity references identify whole existing black components.
+    /// Only the current marks determine their visible extent.
+    pub fn focus_cells(&self, grid: &Grid, marks: &[u8]) -> Vec<usize> {
+        let connectivity = self.steps.iter()
+            .any(|step| matches!(step.rule, Rule::Bridge | Rule::Unreachable))
+            || self.conflict.as_ref()
+                .is_some_and(|conflict| conflict.kind == ConflictKind::Connectivity);
+        let mut focus = vec![false; grid.len()];
+        for &cell in &self.focus {
+            if cell < grid.len() {
+                focus[cell] = true;
+            }
+        }
+        if connectivity {
+            let mut seen = vec![false; grid.len()];
+            let mut stack = self.focus.clone();
+            while let Some(cell) = stack.pop() {
+                if cell >= grid.len() || seen[cell] || marks[cell] != BLACK {
+                    continue;
+                }
+                seen[cell] = true;
+                focus[cell] = true;
+                stack.extend(grid.ortho(cell).iter().flatten().copied());
+            }
+        }
+        focus.into_iter().enumerate()
+            .filter_map(|(i, included)| included.then_some(i)).collect()
+    }
+
     /// Measures the displayed proof, not the minimum possible proof.
     /// SAT and unrecorded enumeration branches have no proof complexity estimate.
     pub fn metrics(&self, grid: &Grid) -> Option<ProofMetrics> {
@@ -492,6 +521,19 @@ mod tests {
             vec![WHITE, UNKNOWN, WHITE, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN]
         );
     }
+    #[test]
+    fn bridge_hints_highlight_whole_existing_wall_components() {
+        let grid = Grid::new(9, 1);
+        let marks = vec![BLACK, BLACK, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, BLACK, BLACK];
+        let Outcome::Found(hint) = find(&grid, &marks, &[], now_ms() + 5000.0) else {
+            panic!("missing bridge hint")
+        };
+        assert_eq!(hint.steps[0].rule, Rule::Bridge);
+        assert_eq!(hint.marks, vec![(2, BLACK)]);
+        assert_eq!(hint.focus_cells(&grid, &marks), vec![0, 1, 2, 7, 8]);
+        assert_eq!(marks[2], UNKNOWN);
+    }
+
     #[test]
     fn local_case_hints_keep_the_enumerated_clue_in_focus() {
         let grid = Grid::new(4, 3);

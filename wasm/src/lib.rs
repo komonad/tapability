@@ -448,10 +448,7 @@ impl Engine {
         let result = hints::find(&puzzle.grid, &self.cells, &puzzle.clues, now_ms() + 2500.0);
         match result {
             HintOutcome::Found(hint) => {
-                let mut focus = hint.focus;
-                focus.sort_unstable();
-                focus.dedup();
-                self.hint = Some(focus);
+                self.hint = Some(hint.focus_cells(&puzzle.grid, &self.cells));
                 self.set_status(
                     Kind::Info,
                     "hint_ready",
@@ -1303,6 +1300,21 @@ mod tests {
         engine.toggle_solution();
         assert!(engine.hint.is_none());
     }
+    #[test]
+    fn bridge_hint_returns_entire_wall_components_without_marking_the_bridge() {
+        let mut engine = Engine::new();
+        engine.puzzle = Some(Puzzle::new(
+            tapa_core::model::Grid::new(9, 1), vec![], vec![BLACK; 9], 0,
+        ));
+        engine.cells = vec![BLACK, BLACK, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, BLACK, BLACK];
+        engine.wrong = vec![false; 9];
+        let before = engine.cells.clone();
+        engine.command("hint").unwrap();
+        assert_eq!(engine.hint, Some(vec![0, 1, 2, 7, 8]));
+        assert_eq!(engine.cells, before);
+        assert!(engine.history.is_empty());
+    }
+
     #[test]
     fn conflicting_player_marks_never_receive_an_applicable_hint() {
         let mut engine = engine_with_puzzle(6, 42);

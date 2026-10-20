@@ -585,9 +585,13 @@ function render() {
   ctx.strokeRect(1, 1, width - 2, height - 2);
 
   if (state.hint && !showSolution) {
-    const focus = new Uint8Array(n);
-    for (const i of state.hint.focus) if (i >= 0 && i < n) focus[i] = 1;
-    outlineGroup(ctx, focus, C.highlightOutline, 3);
+    const walls = new Uint8Array(n);
+    const area = new Uint8Array(n);
+    for (const i of state.hint.focus) {
+      if (i >= 0 && i < n) (cells[i] === WALL ? walls : area)[i] = 1;
+    }
+    outlineGroup(ctx, walls, C.highlightOutline, 3);
+    outlineGroup(ctx, area, C.highlightOutline, 3);
   }
 
   if (ui.busy && ui.veil) {

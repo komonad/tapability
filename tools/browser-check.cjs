@@ -1305,6 +1305,24 @@ async function main() {
   await evaluate(`(() => { const i=ui.cells.findIndex(v=>v===0); return run('paint begin '+(i%ui.cols)+' '+Math.floor(i/ui.cols)+' 1'); })()`);
   check("editing invalidates the hint",await evaluate(`!ui.state.hint && document.getElementById('hint-card').hidden`));
   await evaluate(`run('reset')`);
+  const componentHint = await evaluate(`(() => {
+    const original = ui.state;
+    ui.cols=9; ui.rows=1; ui.cell=64;
+    ui.cells=new Uint8Array([1,1,0,0,0,0,0,1,1]);
+    ui.clues=new Map(); ui.doneClues=new Uint8Array(9); ui.hover=-1;
+    ui.state={...original,w:9,h:1,cells:'110000011',clues:'',doneClues:'000000000',solution:'',showSolution:false,solved:false,anchor:-1,errorsCells:'000000000',wrong:'000000000',deductionCells:[],hint:{focus:[0,1,2,7,8]}};
+    els.canvas.width=576*ui.dpr; els.canvas.height=64*ui.dpr;
+    render();
+    const ctx=els.canvas.getContext('2d');
+    const pixel=(x,y)=>ctx.getImageData(x*ui.dpr,y*ui.dpr,1,1).data;
+    const orange=p=>Math.abs(p[0]-255)<5&&Math.abs(p[1]-196)<5&&Math.abs(p[2]-72)<5;
+    const result={walls:[0,1,7,8].every(i=>orange(pixel(i*64+32,0))),
+      noInternalBorder:!orange(pixel(64,32)),pendingBorder:orange(pixel(191,32)),
+      pendingUnchanged:pixel(160,32)[0]===255 && ui.cells[2]===0};
+    applyState(original);
+    return result;
+  })()`);
+  check("hint outlines whole wall components and a separate undecided cell",Object.values(componentHint).every(Boolean),JSON.stringify(componentHint));
   const beforeCancel = await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,undo:ui.state.canUndo,size:ui.state.w})`);
   await evaluate(`send('set size 60')`);
   await evaluate(`void generate(${beforeCancel.seed + 1})`);

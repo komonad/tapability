@@ -348,6 +348,8 @@ score; an unfinished reasoning assessment does not imply an invalid puzzle.
 Press **H** or **Hint** to highlight an area worth examining in orange. Hints
 show positions only: no black or white conclusions, proof text or automatic
 marks. The browser offers a dismiss button; native H toggles the highlight.
+Connectivity hints outline the complete referenced black components, with a
+separate outline around the relevant undecided area.
 Editing, resetting, undoing, revealing the solution or replacing the board clears
 the hint. Requesting or dismissing a hint leaves the undo history unchanged.
 

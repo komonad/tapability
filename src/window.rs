@@ -348,7 +348,7 @@ impl App {
         );
         match result {
             tapa_core::hints::Outcome::Found(hint) => {
-                self.hint_focus = hint.focus;
+                self.hint_focus = hint.focus_cells(&puzzle.grid, &self.cells);
                 self.status = "Look at the orange highlighted area.".into();
                 self.status_kind = StatusKind::Info;
             }
