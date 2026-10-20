@@ -241,9 +241,6 @@ function applyState(state) {
 }
 
 function updateChrome(state) {
-  if (state.w > 0) {
-    els.title.textContent = `Tapa ${state.w}x${state.h}`;
-  }
   // the engine reports a language-neutral key plus its numbers
   const statusText = state.statusKey
     ? fill(t(`status.${state.statusKey}`), state.statusArgs)
@@ -508,8 +505,8 @@ function render() {
   for (const [idx, text] of ui.clues) {
     const digits = text.split("");
     const count = digits.length;
-    const scale = count <= 1 ? 0.66 : count === 2 ? 0.46 : count === 3 ? 0.36 : 0.3;
-    ctx.font = `600 ${Math.max(6, Math.round(cell * scale))}px "Inter", sans-serif`;
+    const scale = count <= 1 ? 0.6 : count === 2 ? 0.42 : count === 3 ? 0.33 : 0.27;
+    ctx.font = `400 ${Math.max(7, Math.round(cell * scale))}px "Inter", sans-serif`;
     ctx.fillStyle = errors[idx]
       ? C.clueBad
       : ui.doneClues[idx]

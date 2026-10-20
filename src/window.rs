@@ -765,10 +765,6 @@ impl App {
                 settings_ui::refresh_fonts(self);
                 settings_ui::relayout(self);
             }
-            let title: Vec<u16> = format!("Tapa {}x{} - {}\0", self.size, self.size, self.settings.summary())
-                .encode_utf16()
-                .collect();
-            SetWindowTextW(self.hwnd, title.as_ptr());
             InvalidateRect(self.hwnd, ptr::null(), 0);
         }
         self.new_puzzle(self.seed.wrapping_add(1));
@@ -993,7 +989,7 @@ pub fn run(seed: u64, settings: &Settings, settings_path: std::path::PathBuf) ->
         // centre the window in the work area so it can never land off-screen
         let (win_x, win_y) = render::centered_origin(win_w, win_h);
 
-        let title: Vec<u16> = format!("Tapa {size}x{size} - {}\0", settings.summary()).encode_utf16().collect();
+        let title: Vec<u16> = "Tapa\0".encode_utf16().collect();
         let hwnd = CreateWindowExW(
             0,
             class_name.as_ptr(),

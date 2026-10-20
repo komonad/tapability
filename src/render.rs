@@ -265,12 +265,12 @@ impl Gfx {
                 DeleteObject(*font as HGDIOBJ);
             }
         }
-        let f = |scale: f64| ((self.cell as f64 * scale).round() as i32).max(9);
+        let f = |scale: f64| ((self.cell as f64 * scale).round() as i32).max(7);
         self.font_clue = [
-            make_font(f(0.66), 600),
-            make_font(f(0.46), 600),
-            make_font(f(0.36), 600),
-            make_font(f(0.30), 600),
+            make_font(f(0.60), 400),
+            make_font(f(0.42), 400),
+            make_font(f(0.33), 400),
+            make_font(f(0.27), 400),
         ];
     }
 
@@ -388,7 +388,7 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
         hdc,
         g.font_title,
         C_TEXT,
-        &format!("Tapa {}x{}", app.size, app.size),
+        "Tapa",
         rect(MARGIN, 10, text_right, 38),
         DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
     );

@@ -134,7 +134,7 @@ async function main() {
       `${summary.cols}x${summary.rows} at ${summary.cell}px, ${summary.fields} settings fields`,
   );
   check("title is Tapa", summary.title === "Tapa", summary.title);
-  check("heading shows the board size", /^Tapa \d+x\d+$/.test(summary.heading), summary.heading);
+  check("heading is Tapa", summary.heading === "Tapa", summary.heading);
   check(
     "status reports cells left",
     summary.statusKey === "cells_left",
@@ -989,7 +989,7 @@ async function main() {
   await waitFor(`!ui.busy && ui.cols === 12`, "applying a new size regenerates the board", 90000);
   const resized = await evaluate(`({ cols: ui.cols, rows: ui.rows, heading: document.getElementById("title").textContent, saved: localStorage.getItem("tapa.settings") })`);
   check("a new board size is applied", resized.cols === 12 && resized.rows === 12, JSON.stringify(resized));
-  check("the heading follows the size", resized.heading === "Tapa 12x12", resized.heading);
+  check("the heading stays Tapa after resizing", resized.heading === "Tapa", resized.heading);
   check("settings are remembered in localStorage", /size = 12/.test(resized.saved || ""), resized.saved);
 
   // ---- the zoom slider changes how big the board is drawn ------------------
@@ -1049,7 +1049,7 @@ async function main() {
   })`);
   check("a new board size rebuilds the board", sliderState.cols === 16, JSON.stringify(sliderState));
   check("the size field keeps the applied value", sliderState.field === "16", sliderState.field);
-  check("the heading follows the size", sliderState.heading === "Tapa 16x16", sliderState.heading);
+  check("the heading stays Tapa after slider changes", sliderState.heading === "Tapa", sliderState.heading);
 
   // ---- print and bench run in wasm and show their output ------------------
   await evaluate(`document.getElementById("btn-bench").click()`);
