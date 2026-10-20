@@ -247,6 +247,56 @@ impl Solver {
     }
 }
 
+/// Incremental satisfiability queries under a fixed player position.
+/// No model is blocked, so a later query cannot inherit an artificial exclusion.
+pub(crate) struct PositionSolver {
+    session: Session,
+    assumptions: Vec<Lit>,
+}
+impl PositionSolver {
+    pub(crate) fn new(grid: &Grid, clues: &[(usize, Clue)], marks: &[u8]) -> Self {
+        assert_eq!(marks.len(), grid.len());
+        let session = Session::new(grid.clone(), clues);
+        let mut assumptions = session.enabled.clone();
+        assumptions.extend(
+            marks
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &value)| match value {
+                    BLACK => Some(session.black[i]),
+                    WHITE => Some(!session.black[i]),
+                    _ => None,
+                }),
+        );
+        Self {
+            session,
+            assumptions,
+        }
+    }
+    pub(crate) fn query(
+        &mut self,
+        extra: Option<(usize, u8)>,
+        deadline: Option<f64>,
+    ) -> SolveOutcome {
+        if let Some((cell, value)) = extra {
+            self.assumptions
+                .push(self.session.black[cell].apply_sign(value == BLACK));
+        }
+        let result = self.session.enumerate(
+            &self.assumptions,
+            &SolveLimits {
+                max_solutions: 1,
+                deadline,
+                max_nodes: u64::MAX,
+            },
+        );
+        if extra.is_some() {
+            self.assumptions.pop();
+        }
+        result
+    }
+}
+
 /// Reuses the constraint database and learned clauses throughout clue removal.
 /// The known solution is validated and blocked once; UNSAT proves uniqueness.
 pub(crate) struct UniquenessChecker {

@@ -324,7 +324,7 @@ pub unsafe fn create(app: &mut App) {
     );
     SendMessageW(message, WM_SETFONT, app.gfx.small_font() as WPARAM, 1);
 
-    let help_default = format!("settings saved in {}", app.settings_path.display());
+    let help_default = format!("H: preview a hint. Settings saved in {}", app.settings_path.display());
     let help = CreateWindowExW(
         0,
         wide("STATIC").as_ptr(),

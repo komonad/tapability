@@ -43,6 +43,7 @@ const VK_R_KEY: i32 = b'R' as i32;
 const VK_S_KEY: i32 = b'S' as i32;
 const VK_Z_KEY: i32 = b'Z' as i32;
 const VK_D_KEY: i32 = b'D' as i32;
+const VK_H_KEY: i32 = b'H' as i32;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StatusKind {
@@ -315,7 +316,7 @@ impl App {
             tapa_core::model::one_step_deductions(&puzzle.grid, &self.cells, &puzzle.clues)
         };
         if deduced.is_empty() {
-            self.status = "One step: the rules force nothing new right now.".to_string();
+            self.status = "One step: no direct deduction. Press H for a hint.".to_string();
             self.status_kind = StatusKind::Info;
             return;
         }
@@ -325,6 +326,55 @@ impl App {
             if applied == 1 { "" } else { "s" }
         );
         self.status_kind = StatusKind::Good;
+    }
+
+    pub fn hint(&mut self) {
+        if self.generating || self.show_solution {
+            return;
+        }
+        let Some(puzzle) = self.puzzle.as_ref() else {
+            return;
+        };
+        let result = tapa_core::hints::find(
+            &puzzle.grid,
+            &self.cells,
+            &puzzle.clues,
+            tapa_core::clock::now_ms() + 2500.0,
+        );
+        match result {
+            tapa_core::hints::Outcome::Found(hint) => {
+                let body: Vec<u16> = format!("{}\n\nApply this hint?", hint.english(&puzzle.grid))
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
+                let title: Vec<u16> = "Tapa hint".encode_utf16().chain(Some(0)).collect();
+                if unsafe {
+                    MessageBoxW(
+                        self.hwnd,
+                        body.as_ptr(),
+                        title.as_ptr(),
+                        MB_YESNO | MB_ICONINFORMATION | MB_DEFBUTTON2,
+                    )
+                } == IDYES
+                {
+                    self.apply_marks(hint.marks);
+                }
+            }
+            tapa_core::hints::Outcome::Inconsistent => {
+                self.status =
+                    "Current marks contradict the puzzle. Check or undo them first.".into();
+                self.status_kind = StatusKind::Bad;
+            }
+            tapa_core::hints::Outcome::Incomplete => {
+                self.status = "Hint verification did not finish. No marks were changed.".into();
+                self.status_kind = StatusKind::Info;
+            }
+            tapa_core::hints::Outcome::NoForcedMove => {
+                self.status = "No forced mark was found.".into();
+                self.status_kind = StatusKind::Info;
+            }
+            tapa_core::hints::Outcome::Complete => self.refresh_status(),
+        }
     }
 
     /// Show or hide the solution (the S button / key).
@@ -735,6 +785,7 @@ impl App {
             VK_C_KEY => self.check(),
             VK_Z_KEY => self.undo(),
             VK_D_KEY => self.one_step(),
+            VK_H_KEY => self.hint(),
             VK_SHIFT_KEY => {
                 let down = unsafe { GetAsyncKeyState(VK_SHIFT_KEY) < 0 };
                 self.update_hover_highlight(down);

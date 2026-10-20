@@ -17,6 +17,7 @@
 //! paint move <x> <y>                    continue the stroke
 //! paint end                             finish the stroke
 //! undo | reset | check | solution | onestep
+//! hint | hintapply | hintdismiss         preview, apply or dismiss a hint
 //! cluestep <x> <y>                      single-clue step (middle click)
 //! tap <x> <y>                           one touch tap: cycle the cell's mark
 //! print [count]                         generate and render puzzles as text
@@ -26,7 +27,8 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 
-use tapa_core::clock::Timer;
+use tapa_core::clock::{now_ms, Timer};
+use tapa_core::hints::{self, Hint, Outcome as HintOutcome};
 use tapa_core::config::Settings;
 use tapa_core::generator::{generate_with, GenConfig};
 use tapa_core::model::{
@@ -100,6 +102,8 @@ struct Engine {
     output: String,
     /// Settings error from the last `set`.
     settings_error: String,
+    hint: Option<Hint>,
+    hint_board: Vec<u8>,
 }
 
 impl Engine {
@@ -128,6 +132,8 @@ impl Engine {
             stats: None,
             output: String::new(),
             settings_error: String::new(),
+            hint: None,
+            hint_board: Vec::new(),
         }
     }
 
@@ -176,6 +182,7 @@ impl Engine {
         let mut rng = Rng::new(seed);
         match generate_with(&mut rng, &cfg) {
             Some(result) => {
+                self.clear_hint();
                 self.seed = seed;
                 self.solved = false;
                 self.show_solution = false;
@@ -412,7 +419,7 @@ impl Engine {
                 Kind::Info,
                 "one_step_none",
                 &[],
-                "One step: the rules force nothing new right now.".to_string(),
+                "One step: no direct deduction. Press H for a hint.".to_string(),
             );
             return;
         }
@@ -428,7 +435,74 @@ impl Engine {
         );
     }
 
+    fn clear_hint(&mut self) {
+        self.hint = None;
+        self.hint_board.clear();
+    }
+
+    fn request_hint(&mut self) {
+        self.clear_hint();
+        if self.show_solution {
+            return;
+        }
+        let Some(puzzle) = self.puzzle.as_ref() else {
+            return;
+        };
+        let result = hints::find(&puzzle.grid, &self.cells, &puzzle.clues, now_ms() + 2500.0);
+        match result {
+            HintOutcome::Found(hint) => {
+                self.hint_board = self.cells.clone();
+                self.hint = Some(hint);
+                self.set_status(
+                    Kind::Info,
+                    "hint_ready",
+                    &[],
+                    "Hint preview is shown; apply it to change the board.".into(),
+                );
+            }
+            HintOutcome::Inconsistent => self.set_status(
+                Kind::Bad,
+                "hint_conflict",
+                &[],
+                "Current marks contradict the puzzle. Check or undo them before requesting a hint."
+                    .into(),
+            ),
+            HintOutcome::Complete => self.refresh_status(),
+            HintOutcome::NoForcedMove => self.set_status(
+                Kind::Info,
+                "hint_no_forced",
+                &[],
+                "No cell has a forced value in this position.".into(),
+            ),
+            HintOutcome::Incomplete => self.set_status(
+                Kind::Info,
+                "hint_incomplete",
+                &[],
+                "Hint verification did not finish. No marks were changed.".into(),
+            ),
+        }
+    }
+
+    fn apply_hint(&mut self) {
+        if self.show_solution || self.hint_board != self.cells {
+            self.clear_hint();
+            return;
+        }
+        let Some(hint) = self.hint.take() else {
+            return;
+        };
+        let applied = self.apply_marks(hint.marks);
+        self.clear_hint();
+        self.set_status(
+            Kind::Good,
+            "hint_applied",
+            &[applied as i64],
+            format!("Applied {applied} hinted mark(s)."),
+        );
+    }
+
     fn toggle_solution(&mut self) {
+        self.clear_hint();
         if self.puzzle.is_some() {
             self.show_solution = !self.show_solution;
             let (key, english) = if self.show_solution {
@@ -515,6 +589,7 @@ impl Engine {
     }
 
     fn after_change(&mut self, focus: Option<usize>) {
+        self.clear_hint();
         if focus.is_some() {
             self.last_changed = focus;
         }
@@ -668,6 +743,9 @@ impl Engine {
             "check" => self.check(),
             "solution" => self.toggle_solution(),
             "onestep" => self.one_step(),
+            "hint" => self.request_hint(),
+            "hintapply" => self.apply_hint(),
+            "hintdismiss" => { self.clear_hint(); self.refresh_status(); },
             "tap" => {
                 let x = parse_i64(parts.next())?;
                 let y = parse_i64(parts.next())?;
@@ -722,6 +800,11 @@ impl Engine {
                 "{{\"clues\":{},\"w\":{},\"h\":{},\"ms\":{:.0},\"attempts\":{},\"nodes\":{},\"uniqueVerified\":true,\"solverBackend\":\"batsat\",\"basicRemaining\":{},\"logicalSteps\":{},\"logicalRemaining\":{},\"logicalSolved\":{},\"assessmentExhausted\":{},\"assessmentConsistent\":{}}}",
                 stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes, stats.basic_remaining, stats.logical_steps, stats.logical_remaining, stats.logical_solved, stats.logical_exhausted, stats.logical_consistent
             )),
+        }
+        out.push_str(",\"hint\":");
+        match &self.hint {
+            Some(hint) => push_hint(&mut out, hint, self.puzzle.as_ref().unwrap()),
+            None => out.push_str("null"),
         }
         out.push_str(&format!(
             ",\"w\":{w},\"h\":{h},\"kind\":{},\"seed\":{},\"solved\":{},\"showSolution\":{},\"generating\":{},\"canUndo\":{},\"anchor\":{},\"clueCount\":{}",
@@ -795,6 +878,67 @@ impl Engine {
         out.push('}');
         out
     }
+}
+
+fn push_indices(out: &mut String, cells: &[usize]) {
+    out.push('[');
+    for (k, cell) in cells.iter().enumerate() {
+        if k > 0 {
+            out.push(',');
+        }
+        out.push_str(&cell.to_string());
+    }
+    out.push(']');
+}
+fn push_marks(out: &mut String, marks: &[(usize, u8)]) {
+    out.push('[');
+    for (k, (cell, value)) in marks.iter().enumerate() {
+        if k > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!("[{cell},{value}]"));
+    }
+    out.push(']');
+}
+fn push_hint(out: &mut String, hint: &Hint, puzzle: &Puzzle) {
+    out.push_str(&format!("{{\"tier\":\"{}\",\"marks\":", hint.tier.key()));
+    push_marks(out, &hint.marks);
+    out.push_str(",\"proofMetrics\":");
+    match hint.metrics(&puzzle.grid) {
+        Some(m) => out.push_str(&format!(
+            "{{\"assumptionDepth\":{},\"ruleGroups\":{},\"clues\":{},\"spanW\":{},\"spanH\":{}}}",
+            m.assumption_depth, m.rule_groups, m.clue_count, m.span_w, m.span_h
+        )),
+        None => out.push_str("null"),
+    }
+    out.push_str(",\"focus\":");
+    push_indices(out, &hint.focus);
+    out.push_str(",\"assumption\":");
+    match hint.assumption {
+        Some((cell, value)) => out.push_str(&format!("[{cell},{value}]")),
+        None => out.push_str("null"),
+    }
+    out.push_str(",\"steps\":[");
+    for (k, step) in hint.steps.iter().enumerate() {
+        if k > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!("{{\"rule\":\"{}\",\"focus\":", step.rule.key()));
+        push_indices(out, &step.focus);
+        out.push_str(",\"marks\":");
+        push_marks(out, &step.marks);
+        out.push('}');
+    }
+    out.push_str("],\"conflict\":");
+    match &hint.conflict {
+        Some(failure) => {
+            out.push_str(&format!("{{\"kind\":\"{}\",\"focus\":", failure.kind.key()));
+            push_indices(out, &failure.focus);
+            out.push('}');
+        }
+        None => out.push_str("null"),
+    }
+    out.push('}');
 }
 
 fn parse_i64(text: Option<&str>) -> Result<i64, String> {
@@ -1115,6 +1259,53 @@ mod tests {
         engine.toggle_solution();
         engine.tap_cell(x as i64, y as i64);
         assert_eq!(engine.cells[free], UNKNOWN);
+    }
+
+    #[test]
+    fn hint_preview_apply_and_invalidation_preserve_game_state() {
+        let mut engine = engine_with_puzzle(6, 42);
+        let before = engine.cells.clone();
+        let history = engine.history.clone();
+        engine.command("hint").unwrap();
+        assert_eq!(engine.cells, before);
+        assert_eq!(engine.history, history);
+        let marks = engine.hint.as_ref().expect("hint missing").marks.clone();
+        assert!(engine.state_json("", false).contains("\"hint\":{\"tier\":"));
+        engine.command("hintapply").unwrap();
+        assert!(engine.hint.is_none());
+        for &(i, v) in &marks {
+            assert_eq!(engine.cells[i], v);
+        }
+        for _ in &marks {
+            engine.undo();
+        }
+        assert_eq!(engine.cells, before);
+        engine.command("hint").unwrap();
+        engine.command("hintdismiss").unwrap();
+        assert!(engine.hint.is_none());
+        assert_eq!(engine.cells, before);
+        engine.command("hint").unwrap();
+        let index = engine.hint.as_ref().unwrap().marks[0].0;
+        engine.set_cell(index, engine.puzzle.as_ref().unwrap().solution[index]);
+        assert!(engine.hint.is_none());
+        let changed = engine.cells.clone();
+        engine.command("hintapply").unwrap();
+        assert_eq!(engine.cells, changed);
+        engine.command("hint").unwrap();
+        engine.toggle_solution();
+        assert!(engine.hint.is_none());
+    }
+    #[test]
+    fn conflicting_player_marks_never_receive_an_applicable_hint() {
+        let mut engine = engine_with_puzzle(6, 42);
+        let i = engine.cells.iter().position(|&v| v == UNKNOWN).unwrap();
+        let answer = engine.puzzle.as_ref().unwrap().solution[i];
+        engine.set_cell(i, if answer == BLACK { WHITE } else { BLACK });
+        let before = engine.cells.clone();
+        engine.command("hint").unwrap();
+        assert_eq!(engine.status_key, "hint_conflict");
+        assert!(engine.hint.is_none());
+        assert_eq!(engine.cells, before);
     }
 
     #[test]

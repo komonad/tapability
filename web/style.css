@@ -439,3 +439,11 @@ kbd {
 .density-range input:focus-visible::-moz-range-thumb { outline: 3px solid #9fc9ff; }
 
 #btn-cancel-generation[hidden] { display: none; }
+
+.hint-card { border: 1px solid var(--accent); border-radius: 8px; padding: 10px; background: var(--card); font-size: 13px; }
+.hint-card p { margin: 8px 0; }
+.hint-card summary { color: var(--accent); cursor: pointer; }
+.hint-card ol { padding-left: 22px; max-height: 240px; overflow-y: auto; }
+.hint-card li { margin-bottom: 7px; }
+.hint-card #hint-conclusion { font-weight: 600; }
+.hint-card .buttons { margin-top: 8px; }

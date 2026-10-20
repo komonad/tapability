@@ -48,6 +48,7 @@ Fill every cell black or white:
 | left click on a white cell | switches it to wall, and vice versa |
 | Z | undo (hold to repeat; one stroke = one entry per cell) |
 | D | one step: apply clue, 2x2 and connection deductions |
+| H | preview a rule, contradiction or SAT-verified hint |
 | middle click a clue | step just that one clue, without cascading |
 | Alt + left click a clue | the same, for mice and trackpads without a middle button |
 | drag the size slider | pick a board size; the puzzle is rebuilt when you release it |
@@ -233,7 +234,7 @@ middle button is needed.
 | red clues, red sealed-off walls, red 2x2, red wrong cells | `live_errors` in the engine, drawn as outlines |
 | a small square for an explicit empty mark | canvas |
 | no grid line between two filled cells, so wall groups read as one shape | `solid()` in `web/app.js`, same rule in `src/render.rs` |
-| N / R / C / S / D / Z keys, hold Z to repeat | window key handlers |
+| N / R / C / S / D / H / Z keys, hold Z to repeat | window key handlers |
 | middle click a clue to step only that clue | `cluestep` command |
 | Alt + click, or the "Step one clue" button, for the same thing | `stepClue` in `web/app.js` |
 | size slider, window resize rescales the canvas | `layout()` in `web/app.js` |
@@ -325,6 +326,33 @@ The separate `reasoning` module performs deterministic clue-pattern intersection
 basic progress and bounded one-cell contradiction progress using those rules.
 It does not call SAT. SAT search effort is diagnostic data, not a human difficulty
 score; an unfinished reasoning assessment does not imply an invalid puzzle.
+
+## Hints
+
+Press **H** or **Hint** to preview one next move. The browser displays the
+explanation on the left and highlights its target cells. **Apply hint** commits
+only those conclusions as normal undoable marks. Editing, resetting, undoing or
+replacing a board invalidates the preview. The native H shortcut previews the
+proof in a dialog before applying it.
+
+Hints first use a named direct rule, then try one-cell contradiction proofs.
+A contradiction hint includes its assumed mark, replayable basic-rule steps and
+the conflicting clue, black square or connectivity condition. Only the refuted
+assumption's opposite is committed; hypothetical intermediate marks remain in
+the explanation. If these rules do not yield a hint, incremental SAT verifies
+that the opposite value has no satisfying completion. Such a hint is labelled
+**Complete solver verification** and does not claim a human-rule proof.
+
+Hint search checks that the current player marks have a satisfying completion
+before proposing a move. Inconsistent, ambiguous and interrupted searches never
+turn an arbitrary model into a hint. The search uses a 2.5-second response window;
+interruption preserves the board. Hint proofs use the player's marks and puzzle
+constraints, without reading the stored answer. Human-rule hints record assumption
+depth, rule groups, distinct clues and the displayed proof span. These describe
+one verified proof and bound the simplest proof from above; they are not a
+minimum proof or calibrated human grade. SAT-only hints have unknown human-proof
+complexity. The D shortcut keeps its single
+snapshot round semantics.
 
 ## How the generator works
 

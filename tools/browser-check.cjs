@@ -1232,6 +1232,27 @@ async function main() {
   await call("Emulation.clearDeviceMetricsOverride");
   await sleep(300);
 
+
+  // Hint previews are separate from player marks and survive only that position.
+  await evaluate(`send('set size 6')`);
+  await evaluate(`generate(42)`);
+  const hintBefore=await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,canUndo:ui.state.canUndo})`);
+  await evaluate(`run('hint')`);
+  const hintPreview=await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,canUndo:ui.state.canUndo,hint:ui.state.hint,visible:!document.getElementById('hint-card').hidden,left:document.getElementById('hint-card').getBoundingClientRect().right<=document.getElementById('board').getBoundingClientRect().left,explanation:document.getElementById('hint-explanation').textContent,unknown:ui.state.solution})`);
+  check("hint preview preserves marks and undo history",hintBefore.cells===hintPreview.cells && hintBefore.canUndo===hintPreview.canUndo && hintBefore.seed===hintPreview.seed);
+  check("hint explanation appears on the left without revealing the solution",hintPreview.visible && hintPreview.left && hintPreview.explanation.length>0 && hintPreview.unknown==="");
+  check("direct hint records human proof metrics",hintPreview.hint && hintPreview.hint.tier==='rule' && hintPreview.hint.proofMetrics.assumptionDepth===0);
+  await evaluate(`run('hintapply')`);
+  const hintAfter=await evaluate(`({cells:ui.state.cells,hint:ui.state.hint,hidden:document.getElementById('hint-card').hidden})`);
+  check("applying a hint commits only its conclusions",hintPreview.hint.marks.every(([i,v])=>hintAfter.cells[i]===String(v)) && [...hintAfter.cells].every((v,i)=>v===hintBefore.cells[i] || hintPreview.hint.marks.some(([j])=>j===i)) && !hintAfter.hint && hintAfter.hidden);
+  for(const mark of hintPreview.hint.marks) await evaluate(`run('undo')`);
+  check("hinted marks can be undone",await evaluate(`ui.state.cells===${JSON.stringify(hintBefore.cells)}`));
+  await evaluate(`run('hint')`); await evaluate(`run('hintdismiss')`);
+  check("dismissing a hint preserves the board",await evaluate(`!ui.state.hint && ui.state.cells===${JSON.stringify(hintBefore.cells)}`));
+  await evaluate(`run('hint')`);
+  await evaluate(`(() => { const [i,v]=ui.state.hint.marks[0]; return run('paint begin '+(i%ui.cols)+' '+Math.floor(i/ui.cols)+' '+(v===1?1:0)); })()`);
+  check("editing invalidates the hint preview",await evaluate(`!ui.state.hint && document.getElementById('hint-card').hidden`));
+  await evaluate(`run('reset')`);
   const beforeCancel = await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,undo:ui.state.canUndo,size:ui.state.w})`);
   await evaluate(`send('set size 60')`);
   await evaluate(`void generate(${beforeCancel.seed + 1})`);
