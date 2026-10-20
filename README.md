@@ -47,7 +47,7 @@ Fill every cell black or white:
 | click the same mark again | clear the cell |
 | left click on a white cell | switches it to wall, and vice versa |
 | Z | undo (hold to repeat; one stroke = one entry per cell) |
-| D | one step: apply clue, 2x2 and connection deductions |
+| D | one snapshot round, or one local clue enumeration |
 | H | highlight an area worth examining |
 | middle click a clue | step just that one clue, without cascading |
 | Alt + left click a clue | the same, for mice and trackpads without a middle button |
@@ -112,6 +112,14 @@ black and white marks. Z restores the whole previous position and its selection;
 manual edits clear the selection. Single-clue steps use the same grouped undo
 behavior. Internal difficulty assessment uses a separate basic-rule closure that
 repeats until stable.
+
+When basic rules stall, D enumerates the feasible distributions around one clue.
+Each distribution is placed on a copy of the current board and receives one
+parallel round of basic rules. Immediate violations of any clue, the 2x2 rule
+or potential black connectivity discard that distribution. Marks shared by every
+surviving branch form one undoable round, including marks outside the clue's
+neighborhood. Branches do not enumerate another clue, iterate deductions or call
+SAT. A click stops at the first clue that yields a conclusion.
 
 ## Controls and settings in the UI
 
@@ -343,8 +351,8 @@ marks. The browser offers a dismiss button; native H toggles the highlight.
 Editing, resetting, undoing, revealing the solution or replacing the board clears
 the hint. Requesting or dismissing a hint leaves the undo history unchanged.
 
-Hint search first uses direct rules, then one-cell contradiction proofs, then
-incremental SAT verification. It checks that the current marks have a satisfying
+Hint search first uses direct rules and local clue enumeration, then one-cell
+contradiction proofs, then incremental SAT verification. It checks that the current marks have a satisfying
 completion and verifies a forced move before returning its focus positions.
 Inconsistent, ambiguous and interrupted searches never turn an arbitrary model
 into a hint. The search uses a 2.5-second response window and preserves the board

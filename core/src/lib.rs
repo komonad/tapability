@@ -7,6 +7,7 @@
 //! * [`model`] - the board, the clues and the rules (including live feedback)
 //! * [`solver`] - incremental CDCL SAT with complete solution and uniqueness checks
 //! * [`reasoning`] - deterministic deductions without complete search
+//! * [`clue_cases`] - local clue distributions with one basic round per branch
 //! * [`generator`] - puzzle generation with uniqueness proofs and bounded logical assessment
 //! * [`difficulty`] - logical progress and one-cell contradiction assessment
 //! * [`hints`] - named-rule proofs and SAT-verified hint conclusions
@@ -16,6 +17,7 @@
 //! * [`clock`] - monotonic milliseconds that also work in the browser
 
 pub mod clock;
+pub mod clue_cases;
 pub mod config;
 pub mod difficulty;
 pub mod generator;

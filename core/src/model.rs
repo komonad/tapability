@@ -370,9 +370,24 @@ pub fn clue_deductions(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> Ve
     }
 }
 
-/// Infer one parallel round from an immutable board snapshot.
-/// New consequences do not become premises until the next round.
+/// Apply one basic snapshot round, or one local clue case when basic rules stall.
+/// Case branches contain one basic round and never explore further assumptions.
 pub fn one_step_deductions(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> Vec<(usize, u8)> {
+    let direct = basic_step_deductions(grid, marks, clues);
+    if !direct.is_empty() {
+        return direct;
+    }
+    crate::clue_cases::clue_case_step(grid, marks, clues, None)
+        .map(|step| step.marks)
+        .unwrap_or_default()
+}
+
+/// One snapshot round with no case enumeration or recursive exploration.
+pub(crate) fn basic_step_deductions(
+    grid: &Grid,
+    marks: &[u8],
+    clues: &[(usize, Clue)],
+) -> Vec<(usize, u8)> {
     let mut snapshot = marks.to_vec();
     for (cell, _) in clues {
         snapshot[*cell] = WHITE;

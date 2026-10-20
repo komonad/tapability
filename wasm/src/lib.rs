@@ -1082,6 +1082,36 @@ mod tests {
     }
 
     #[test]
+    fn local_case_deductions_are_selected_and_undone_as_one_round() {
+        let mut engine = Engine::new();
+        let mut solution = vec![WHITE; 12];
+        solution[1] = BLACK;
+        engine.puzzle = Some(Puzzle::new(
+            tapa_core::model::Grid::new(4, 3),
+            vec![(0, vec![1]), (5, vec![1])],
+            solution,
+            0,
+        ));
+        engine.cells = vec![
+            WHITE, UNKNOWN, WHITE, UNKNOWN, UNKNOWN, WHITE,
+            UNKNOWN, WHITE, WHITE, UNKNOWN, WHITE, UNKNOWN,
+        ];
+        engine.wrong = vec![false; 12];
+        let before = engine.cells.clone();
+        engine.command("hint").unwrap();
+        assert!(engine.hint.as_ref().unwrap().contains(&0));
+        assert_eq!(engine.cells, before);
+        engine.command("onestep").unwrap();
+        assert!(engine.hint.is_none());
+        assert_eq!(engine.deduction_selection, vec![6, 9]);
+        assert_eq!(engine.cells[6], WHITE);
+        assert_eq!(engine.cells[9], WHITE);
+        engine.command("undo").unwrap();
+        assert_eq!(engine.cells, before);
+        assert!(engine.deduction_selection.is_empty());
+    }
+
+    #[test]
     fn one_undo_restores_a_whole_deduction_round_and_its_selection() {
         let mut engine = Engine::new();
         engine.puzzle = Some(Puzzle::new(

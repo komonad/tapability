@@ -1,6 +1,7 @@
 //! Explainable deductions and SAT-verified progress from the player's marks.
 use crate::{
     clock::now_ms,
+    clue_cases::clue_case_step,
     model::{clue_satisfiable, clue_step, connection_bridges, Clue, Grid, BLACK, UNKNOWN, WHITE},
     reasoning::Reasoner,
     solver::PositionSolver,
@@ -10,6 +11,7 @@ use crate::{
 pub enum Rule {
     Square,
     Clue,
+    ClueCases,
     Bridge,
     Unreachable,
 }
@@ -18,6 +20,7 @@ impl Rule {
         match self {
             Self::Square => "square",
             Self::Clue => "clue",
+            Self::ClueCases => "clue_cases",
             Self::Bridge => "bridge",
             Self::Unreachable => "unreachable",
         }
@@ -269,6 +272,20 @@ pub fn find(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)], deadline: f64) -
             conflict: None,
         });
     }
+    if let Some(step) = clue_case_step(grid, &current, clues, Some(deadline)) {
+        return Outcome::Found(Hint {
+            tier: Tier::Rule,
+            marks: step.marks.clone(),
+            focus: step.focus.clone(),
+            assumption: None,
+            steps: vec![Step {
+                rule: Rule::ClueCases,
+                focus: step.focus,
+                marks: step.marks,
+            }],
+            conflict: None,
+        });
+    }
     let mut candidates: Vec<_> = (0..grid.len()).filter(|&i| current[i] == UNKNOWN).collect();
     let mut weight = vec![0usize; grid.len()];
     for (cell, _) in clues {
@@ -343,9 +360,9 @@ pub struct ProofMetrics {
 
 impl Hint {
     /// Measures the displayed proof, not the minimum possible proof.
-    /// Complete SAT verification alone has no human-proof complexity estimate.
+    /// SAT and unrecorded enumeration branches have no proof complexity estimate.
     pub fn metrics(&self, grid: &Grid) -> Option<ProofMetrics> {
-        if self.tier == Tier::Sat {
+        if self.tier == Tier::Sat || self.steps.iter().any(|step| step.rule == Rule::ClueCases) {
             return None;
         }
         let mut clues = std::collections::BTreeSet::new();
@@ -421,6 +438,7 @@ impl Hint {
                             x + 1
                         )
                     }
+                    Rule::ClueCases => "Local clue distributions with one basic round per case".into(),
                     Rule::Square => "Three black cells in a 2x2".into(),
                     Rule::Bridge => "Required connection between black cells".into(),
                     Rule::Unreachable => "Cells unable to connect to the black region".into(),
@@ -474,6 +492,25 @@ mod tests {
             vec![WHITE, UNKNOWN, WHITE, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN]
         );
     }
+    #[test]
+    fn local_case_hints_keep_the_enumerated_clue_in_focus() {
+        let grid = Grid::new(4, 3);
+        let clues = [(0, vec![1]), (5, vec![1])];
+        let board = vec![
+            WHITE, UNKNOWN, WHITE, UNKNOWN, UNKNOWN, WHITE,
+            UNKNOWN, WHITE, WHITE, UNKNOWN, WHITE, UNKNOWN,
+        ];
+        let Outcome::Found(hint) = find(&grid, &board, &clues, now_ms() + 5000.0) else {
+            panic!("missing hint")
+        };
+        assert_eq!(hint.tier, Tier::Rule);
+        assert_eq!(hint.steps.len(), 1);
+        assert_eq!(hint.steps[0].rule, Rule::ClueCases);
+        assert_eq!(hint.focus[0], 0);
+        assert_eq!(hint.marks, vec![(6, WHITE), (9, WHITE)]);
+        assert!(hint.metrics(&grid).is_none());
+    }
+
     #[test]
     fn ambiguous_positions_do_not_turn_a_model_into_a_hint() {
         assert!(matches!(
