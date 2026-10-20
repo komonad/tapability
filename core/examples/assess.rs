@@ -67,7 +67,7 @@ fn assess(label: &str, grid: &Grid, clues: &[(usize, Clue)], generation_ms: f64)
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().collect();
-    println!("label,width,height,clues,first_forced,remaining,search_nodes,unique,black_fraction,cycles,single_clues,generation_ms,logical_remaining,contradiction_steps,rating_exhausted,quality_passed");
+    println!("label,width,height,clues,first_forced,remaining,sat_work,unique,black_fraction,cycles,single_clues,generation_ms,logical_remaining,contradiction_steps,rating_exhausted,quality_passed");
     if let Some(path) = args.get(1).filter(|p| p.as_str() != "-") {
         for line in fs::read_to_string(path)?
             .trim_start_matches('\u{feff}')

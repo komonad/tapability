@@ -44,10 +44,12 @@ pub fn print_puzzles(count: usize, settings: &Settings, seed: u64) -> String {
                 );
                 let _ = writeln!(
                     out,
-                    "quality: logical path verified, basic_left={} steps={} restored={}",
+                    "assessment: basic_left={} steps={} remaining={} exhausted={} consistent={}",
                     result.stats.basic_remaining,
                     result.stats.logical_steps,
-                    result.stats.restored_clues
+                    result.stats.logical_remaining,
+                    result.stats.logical_exhausted,
+                    result.stats.logical_consistent
                 );
                 out.push_str(&render_puzzle(&puzzle));
                 out.push_str("solution:\n");
@@ -58,7 +60,7 @@ pub fn print_puzzles(count: usize, settings: &Settings, seed: u64) -> String {
                 let outcome = solver.solve(&solver.fresh_state(), &SolveLimits::unique_check(None));
                 let _ = writeln!(
                     out,
-                    "check: rules={} solutions={}{} nodes={}",
+                    "check: rules={} solutions={}{} sat_work={}",
                     if errors.is_empty() { "ok" } else { "BROKEN" },
                     outcome.solutions.len(),
                     if outcome.aborted { " (aborted)" } else { "" },
@@ -95,7 +97,7 @@ pub fn bench(count: usize, settings: &Settings, seed: u64) -> String {
                 clue_hi = clue_hi.max(result.stats.clue_count);
                 let _ = writeln!(
                     out,
-                    "seed {this_seed}: {:>7.0} ms  clues={:>3}  black={:>3}  blank={:>3} clueless={:>3}  attempts={}  nodes={} solve={:.0}ms checks={} maxcheck={}",
+                    "seed {this_seed}: {:>7.0} ms  clues={:>3}  black={:>3}  blank={:>3} clueless={:>3}  attempts={}  sat_work={} solve={:.0}ms checks={} maxcheck={}",
                     result.stats.elapsed.as_secs_f64() * 1000.0,
                     result.stats.clue_count,
                     result.stats.black_count,

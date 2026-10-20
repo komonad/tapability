@@ -256,8 +256,9 @@ function updateChrome(state) {
   }
   const stats = state.genStats;
   const quality = document.getElementById("quality");
-  if (quality) quality.textContent = stats && stats.qualityVerified
-    ? fill(t("quality.verified"), [stats.basicRemaining, stats.logicalSteps]) : "";
+  if (quality) quality.textContent = stats && stats.uniqueVerified
+    ? fill(t("quality.verified"), [stats.basicRemaining, stats.logicalSteps, stats.logicalRemaining])
+      + " " + t(stats.assessmentConsistent === false ? "quality.inconsistent" : stats.logicalSolved ? "quality.solved" : stats.assessmentExhausted ? "quality.partial" : "quality.stalled") : "";
   els.stats.textContent = stats
     ? fill(t("stats"), [stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes])
     : "";

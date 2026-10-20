@@ -1244,7 +1244,23 @@ async function main() {
     JSON.stringify(afterCancel));
   await evaluate(`send('set size ${beforeCancel.size}')`);
   check("ordinary settings do not expose resource caps", await evaluate(`!document.querySelector('input[data-key=node_budget],input[data-key=time_budget_ms],input[data-key=max_attempts]')`));
-  check("generated puzzles carry a verified logical path", await evaluate(`ui.state.genStats.qualityVerified === true`));
+  check("generated puzzles carry a SAT uniqueness proof", await evaluate(`ui.state.genStats.uniqueVerified === true && ui.state.genStats.solverBackend === "batsat"`));
+
+  const assessmentLabels = await evaluate(`(() => {
+    const state = ui.state;
+    const cases = [
+      {logicalSolved:false, logicalRemaining:17, assessmentExhausted:false, assessmentConsistent:true, key:'quality.stalled'},
+      {logicalSolved:false, logicalRemaining:17, assessmentExhausted:true, assessmentConsistent:true, key:'quality.partial'},
+      {logicalSolved:false, logicalRemaining:17, assessmentExhausted:false, assessmentConsistent:false, key:'quality.inconsistent'},
+    ];
+    const labels = cases.map(c => {
+      updateChrome({...state, genStats:{...state.genStats, ...c}});
+      return document.getElementById('quality').textContent.endsWith(t(c.key));
+    });
+    updateChrome(state);
+    return labels;
+  })()`);
+  check("assessment stalls, limits and conflicts have distinct labels", assessmentLabels.every(Boolean), JSON.stringify(assessmentLabels));
 
   const beforeWatchdog = await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,undo:ui.state.canUndo})`);
   await evaluate(`(() => {

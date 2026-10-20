@@ -3,7 +3,7 @@
 A Tapa puzzle game in Rust, in two flavours that share one engine: a Win32
 desktop window and a browser front end that runs the same code as WebAssembly.
 The only external crate is `winapi`, and only the desktop window needs it. Both
-contain a rule-based solver and a generator that only ever emits puzzles whose
+contain a SAT solver, a human-oriented reasoner and a generator that only ever emits puzzles whose
 solution is **provably unique**.
 
 ![a generated board](board.png)
@@ -165,7 +165,7 @@ button. Timeout and cancellation preserve the current game and undo history.
 For explicitly constrained CLI jobs, `--set limited_generation=true` enables
 `node_budget`, `time_budget_ms` and `max_attempts`. With that opt-in, the budget
 is a shared pool: each uniqueness proof
-gets `remaining / proofs left * check_slack` nodes, so one that needs a little
+gets `remaining / proofs left * check_slack` SAT work units, so one that needs a little
 more than its fair share can still finish. A proof that does run out keeps its
 clue. Small boards retry unfinished proofs once at the end of the pass.
 Running out of work never breaks uniqueness; it can leave a redundant clue.
@@ -281,7 +281,9 @@ node tools/serve.cjs 8081 some/dir   # serve another directory on another port
 | file | contents |
 |---|---|
 | `core/src/model.rs` | grid geometry, cell states, clue encoding (`mask -> run lengths`), rule validation, live rule analysis, one-step deductions |
-| `core/src/solver.rs` | propagation + backtracking search, capped solution counting |
+| `core/src/solver.rs` | incremental CDCL SAT, connectivity cuts, complete solution and uniqueness checks |
+| `core/src/reasoning.rs` | deterministic clue, square and connectivity deductions |
+| `core/src/difficulty.rs` | basic progress and bounded contradiction assessment |
 | `core/src/generator.rs` | tree-shaped solution, maximal clue set, minimisation to a minimal set |
 | `core/src/config.rs` | generation settings (file, command line, in-game controls) |
 | `core/src/clock.rs` | monotonic milliseconds: `Instant` natively, a host import in wasm |
@@ -301,30 +303,28 @@ node tools/serve.cjs 8081 some/dir   # serve another directory on another port
 
 ## How the solver works
 
-Search is depth-first backtracking, but almost all the work is done by
-propagation, which runs to a fixpoint before every branch:
+Complete solving uses [BatSat](https://github.com/c-cube/batsat), a pure Rust
+CDCL SAT solver based on MiniSat. The same backend runs natively and in WebAssembly.
+Each board cell has a Boolean black variable. Clue pattern selectors enforce the
+cyclic neighbour runs and white clue cells; each 2x2 window contributes a clause
+forbidding four black cells.
 
-1. **clue cells are empty** - forced;
-2. **arc consistency per clue** - every clue has a precomputed set of legal
-   8-neighbour bitmasks (filtered for cells outside the grid, which can never
-   be black). The surviving set is kept as a 256-bit bitset, so "which patterns
-   still fit" is a handful of AND instructions; a neighbour that is black
-   (white) in *all* surviving patterns is assigned. If nothing survives, the
-   branch is dead;
-3. **no 2x2 black** - three black cells force the fourth white. Only the four
-   windows around a cell that just turned black are examined;
-4. **connectivity** - the cells that could still become black are split into
-   orthogonal components. All black cells must end up in one component, so once
-   one component contains a black cell, every other component is forced white.
-   Two components containing black cells is a contradiction.
+Connectivity uses lazy cuts: when a SAT model contains separate black components,
+a surviving black cell inside a component and one outside require at least one
+black cell on its boundary. These globally valid clauses exclude disconnected
+models without excluding a connected solution. Model blocking counts distinct
+boards, independently of auxiliary pattern variables.
 
-Branching is **not** on single cells: the solver picks the clue with the fewest
-surviving patterns and branches on those patterns, which assigns up to eight
-cells at once. Only when every clue is fully determined does it fall back to
-picking the most constrained single cell.
+During generation, all candidate clues have activation literals. The known valid
+solution is blocked once, and each removal changes only the activation assumptions.
+UNSAT proves no alternative solution exists. Learned clauses and connectivity cuts
+remain valid between checks. An interrupted check never proves uniqueness.
 
-Uniqueness is decided by counting solutions with the cap set to 2: exactly one
-solution *found and proven* (not "aborted by budget") means unique.
+The separate `reasoning` module performs deterministic clue-pattern intersection,
+2x2 deductions and black-connectivity deductions. The `difficulty` module records
+basic progress and bounded one-cell contradiction progress using those rules.
+It does not call SAT. SAT search effort is diagnostic data, not a human difficulty
+score; an unfinished reasoning assessment does not imply an invalid puzzle.
 
 ## How the generator works
 
@@ -347,41 +347,30 @@ solution *found and proven* (not "aborted by budget") means unique.
    uniqueness proof. Large-board proofs use short work slices scaled by area
    and effort; a slower proof retains its clue. Aborted large-board proofs are
    not retried in the same removal pass.
-4. **repair logical stalls**: assess basic rules and single-cell contradiction
-   propagation without recursive search. A stalled candidate can regain up to
-   one valid given per 50 board cells to unlock deductions. Givens are selected
-   for context-specific progress, with a penalty for revealing many opening
-   moves. Restoration trials retain the basic-rule workload floor before
-   committing a given. Adding a valid given to a proven unique puzzle preserves
-   its unique solution. The resulting set need not be inclusion-minimal.
-5. **screen the logical path**: every delivered puzzle must have a consistent,
-   completed assessment within 12 probes per board cell. For boards of at least
-   225 cells, acceptance also requires:
-   - at least half the non-clue cells, scaled to at most 625 reference cells,
-     remain undecided after basic rules, and no more than 80% remain;
-   - at least one successful contradiction step per 25 reference cells;
-   - immediate clue deductions cover at least 3% of non-clue cells;
-   - clue cells occupy 12–23% of the board.
-6. **deliver a qualifying path**: large boards return the first qualifying
-   puzzle. Effort controls how much proof work each removal receives. Small
-   boards compare up to `difficulty` candidates by workload and clue count.
+4. **assess reasoning independently**: basic rules and single-cell contradiction
+   propagation record opening deductions, remaining cells and successful steps.
+   Assessment may complete, stall, or stop at its time allowance. Generation does
+   not add givens to force completion by this rule set.
+5. **screen workload and composition**: boards of at least 225 cells retain an
+   opening-workload floor scaled to at most 625 reference cells, at most 80% of
+   playable cells unresolved by basic rules, immediate clue deductions covering
+   at least 3% of playable cells, and 12–23% clue density. These are heuristics,
+   not calibrated human difficulty grades. Neither a complete single-layer path
+   nor a minimum contradiction-step count is required.
+6. **deliver a qualifying puzzle**: large boards return the first qualifying
+   puzzle. Effort controls SAT work per removal. Small boards compare up to
+   `difficulty` candidates using measured reasoning workload and clue count.
 
-A completed logical path is checked against the stored unique solution.
-Generation never substitutes an unscreened puzzle. When the response window
-expires without a qualifying candidate, the search reports failure. The browser
-retains the current puzzle and marks when a new generation fails and displays
-verified path statistics on the left after success. Small boards keep the
-complete-path gate without the large-board workload floors.
-
-These workload targets describe a limited rule set. They do not measure the
-ability of the full search solver or constitute a calibrated human difficulty
-grade. Successful fixed-seed runs are reproducible when the response window
-allows the same work to finish. A timeout can change whether a result is available.
+Every delivered puzzle has a validated stored solution and a completed SAT
+uniqueness proof. Assessment completion is reported separately. The browser
+retains the current puzzle and marks when generation fails or times out.
+Fixed-seed results are reproducible when the response window allows the same
+work to finish; a timeout can change which removals finish.
 
 A native assessment example accepts tab-separated puzzle files with four fields:
 width, height, label and `cell=digits;cell=digits` clues. A digit `0` denotes no
 black neighbours. It reports basic progress, bounded logical progress, full
-search nodes, uniqueness and generation time using the same rules for each board:
+SAT work units, uniqueness and generation time using the same rules for each board:
 
 ```
 cargo run --release -p tapa-core --example assess -- puzzles.tsv 12
@@ -410,8 +399,8 @@ only placed where black already touches).
 
 ## Measuring generation
 
-Generation time includes shape sampling, uniqueness proofs, logical-path repair
-and comparison of qualifying candidates. Measure a fixed seed set with the
+Generation time includes shape sampling, incremental SAT uniqueness proofs,
+bounded reasoning assessment and comparison of qualifying candidates. Measure a fixed seed set with the
 assessment example above to report completion times alongside logical-path
 statistics. The WebAssembly engine runs in a worker so the page remains
 interactive during generation.
@@ -420,18 +409,17 @@ interactive during generation.
 
 * The generator is tuned for 20x20; other sizes work but were only spot-checked.
 * Initial removal seeks an inclusion-minimal unique clue set. Bounded proofs
-  can retain a redundant clue, and logical-path repair can restore givens to
-  make the reasoning complete. Final quality takes precedence over clue minimality.
-* Logical-path screening uses a bounded rule set. Some configurations can fail
-  to produce a qualifying puzzle within the response window. Human difficulty
+  can retain a redundant clue. Uniqueness is guaranteed even when minimality
+  has not been proved.
+* Reasoning assessment uses a limited rule set. Unresolved cells indicate an
+  assessment limit, not a calibrated human difficulty level. Human difficulty
   and visual composition still need playtesting.
-* The solver has no clause learning or restarts; individual removal proofs use
-  work slices so one candidate cannot monopolize the search.
+* Individual SAT removal proofs use work slices so one proof cannot monopolize
+  generation. Some settings can still reach the response deadline.
 * The desktop build is Windows only (Win32 + GDI). The engine and the browser
   front end are not: they only need `wasm32-unknown-unknown`.
 * The browser build needs a static server; `file://` cannot fetch WebAssembly.
   `tools/serve.cjs` is that server, with no dependencies.
-* No network access was available while this was written, so the only dependency
-  is `winapi`, which was already in the local cargo cache. That is also why the
-  wasm bridge is hand-written instead of using `wasm-bindgen`.
+* The browser bridge uses a small hand-written WebAssembly ABI. BatSat is a
+  shared engine dependency; Win32 APIs are confined to the desktop crate.
 

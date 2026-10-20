@@ -33,8 +33,8 @@ use tapa_core::model::{
     clue_satisfiable, clue_satisfied, clue_step, clue_text, line_cells, live_errors,
     one_step_deductions, validate, LiveErrors, Puzzle, BLACK, UNKNOWN, WHITE,
 };
-use tapa_core::rng::Rng;
 use tapa_core::report;
+use tapa_core::rng::Rng;
 
 /// How many marks can be undone; the same limit as the native game.
 const MAX_HISTORY: usize = 4096;
@@ -64,6 +64,10 @@ struct GenSummary {
     nodes: u64,
     basic_remaining: usize,
     logical_steps: usize,
+    logical_remaining: usize,
+    logical_exhausted: bool,
+    logical_solved: bool,
+    logical_consistent: bool,
 }
 
 struct Engine {
@@ -196,6 +200,10 @@ impl Engine {
                     nodes: result.stats.nodes,
                     basic_remaining: result.stats.basic_remaining,
                     logical_steps: result.stats.logical_steps,
+                    logical_remaining: result.stats.logical_remaining,
+                    logical_exhausted: result.stats.logical_exhausted,
+                    logical_solved: result.stats.logical_solved,
+                    logical_consistent: result.stats.logical_consistent,
                 });
                 self.refresh_derived();
                 self.refresh_status();
@@ -206,7 +214,7 @@ impl Engine {
                     "generation_failed",
                     &[seed as i64],
                     format!(
-                        "no puzzle met the logical quality target in this search (seed {seed}); the current puzzle is preserved"
+                        "no puzzle met the quality target in this search (seed {seed}); the current puzzle is preserved"
                     ),
                 );
             }
@@ -490,7 +498,12 @@ impl Engine {
         }
         self.wrong = wrong;
         if count == 0 {
-            self.set_status(Kind::Good, "check_ok", &[], "No mistakes so far.".to_string());
+            self.set_status(
+                Kind::Good,
+                "check_ok",
+                &[],
+                "No mistakes so far.".to_string(),
+            );
         } else {
             self.set_status(
                 Kind::Bad,
@@ -706,8 +719,8 @@ impl Engine {
         match &self.stats {
             None => out.push_str("null"),
             Some(stats) => out.push_str(&format!(
-                "{{\"clues\":{},\"w\":{},\"h\":{},\"ms\":{:.0},\"attempts\":{},\"nodes\":{},\"qualityVerified\":true,\"basicRemaining\":{},\"logicalSteps\":{}}}",
-                stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes, stats.basic_remaining, stats.logical_steps
+                "{{\"clues\":{},\"w\":{},\"h\":{},\"ms\":{:.0},\"attempts\":{},\"nodes\":{},\"uniqueVerified\":true,\"solverBackend\":\"batsat\",\"basicRemaining\":{},\"logicalSteps\":{},\"logicalRemaining\":{},\"logicalSolved\":{},\"assessmentExhausted\":{},\"assessmentConsistent\":{}}}",
+                stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes, stats.basic_remaining, stats.logical_steps, stats.logical_remaining, stats.logical_solved, stats.logical_exhausted, stats.logical_consistent
             )),
         }
         out.push_str(&format!(
@@ -898,7 +911,11 @@ mod tests {
     #[test]
     fn a_failed_quality_search_preserves_the_current_puzzle_and_marks() {
         let mut engine = engine_with_puzzle(6, 42);
-        let free = engine.cells.iter().position(|&cell| cell == UNKNOWN).unwrap();
+        let free = engine
+            .cells
+            .iter()
+            .position(|&cell| cell == UNKNOWN)
+            .unwrap();
         engine
             .command(&format!("paint begin {} {} 1", free % 6, free / 6))
             .unwrap();
@@ -1073,11 +1090,18 @@ mod tests {
 
         engine.tap_cell(x as i64, y as i64);
 
-        assert_eq!(engine.cells[clue], before[clue], "the clue cell itself is untouched");
+        assert_eq!(
+            engine.cells[clue], before[clue],
+            "the clue cell itself is untouched"
+        );
         let filled = (0..engine.cells.len())
             .filter(|&i| engine.cells[i] != before[i])
             .count();
-        assert!(filled > 0, "the clue step should fill something: {}", engine.status);
+        assert!(
+            filled > 0,
+            "the clue step should fill something: {}",
+            engine.status
+        );
         assert!(engine.status.starts_with("Clue ("), "{}", engine.status);
     }
 

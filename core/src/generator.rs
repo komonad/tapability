@@ -10,9 +10,8 @@
 //!      unusable and we grow another one);
 //!   4. remove clues one by one in random order, keeping each removal only
 //!      after a successful uniqueness proof;
-//!   5. restore valid givens when they unlock a stalled logical path;
-//!   6. screen completed logical paths against size-normalized workload targets
-//!      and return a qualifying puzzle.
+//!   5. evaluate basic deductions and bounded single-cell contradictions;
+//!   6. screen opening workload and clue density independently of completion.
 //!
 //! Every accepted puzzle is therefore guaranteed to have exactly one solution,
 //! and that solution is the shape the generator started from.
@@ -23,11 +22,11 @@ use crate::clock::{generation_progress, now_ms, Timer};
 use crate::config::Settings;
 use crate::difficulty;
 use crate::model::{
-    clue_is_showable, clue_of, clue_step, deduction_closure, feasible_masks, largest_blank_region,
-    largest_clueless_region, validate, Clue, Grid, Puzzle, BLACK, ORTHO, UNKNOWN, WHITE,
+    clue_is_showable, clue_of, largest_blank_region, largest_clueless_region, validate, Clue, Grid,
+    Puzzle, BLACK, ORTHO, WHITE,
 };
 use crate::rng::Rng;
-use crate::solver::{SolveLimits, Solver};
+use crate::solver::{SolveLimits, UniquenessChecker};
 
 pub struct GenConfig {
     pub w: usize,
@@ -40,7 +39,7 @@ pub struct GenConfig {
     /// Budget for the whole generation, as an absolute [`crate::clock::now_ms`]
     /// timestamp in milliseconds.
     pub deadline: Option<f64>,
-    /// Nodes for the whole generation, shared adaptively between proofs.
+    /// SAT work for the whole generation, shared adaptively between proofs.
     pub node_budget: u64,
     /// Time for the whole generation, shared adaptively between proofs.
     pub time_budget: Duration,
@@ -159,17 +158,20 @@ pub struct GenStats {
     pub clue_count: usize,
     pub basic_remaining: usize,
     pub logical_steps: usize,
-    pub restored_clues: usize,
+    pub logical_remaining: usize,
+    pub logical_exhausted: bool,
+    pub logical_solved: bool,
+    pub logical_consistent: bool,
     pub black_count: usize,
     pub elapsed: Duration,
     pub removals: usize,
-    /// Total search nodes spent proving uniqueness while minimising clues.
+    /// Total SAT conflicts and model checks spent proving uniqueness.
     pub nodes: u64,
     /// Time spent inside the solver (diagnostic).
     pub solve_time: Duration,
     /// How many uniqueness checks the minimisation ran (diagnostic).
     pub checks: usize,
-    /// Most nodes any single check used (diagnostic).
+    /// Largest SAT work count of a single check (diagnostic).
     pub max_check_nodes: u64,
     /// Biggest clue-free patch of the finished board.
     pub blank_region: usize,
@@ -204,7 +206,8 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         attempts += 1;
         generation_progress(attempts, accepted);
 
-        let fraction = cfg.black_lo + (cfg.black_hi - cfg.black_lo) * (rng.below(1000) as f64 / 1000.0);
+        let fraction =
+            cfg.black_lo + (cfg.black_hi - cfg.black_lo) * (rng.below(1000) as f64 / 1000.0);
         let target = (n as f64 * fraction) as usize;
         let Some(solution) = random_solution(rng, &grid, target) else {
             continue;
@@ -233,14 +236,15 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         // (3) the maximal clue set must already pin the solution down. This is
         // only a shape filter, so it draws a small share of the pool: a shape
         // that cannot be pinned down quickly is dropped instead of burning time.
-        let start = vec![UNKNOWN; n];
         let mut shape_limits = budget.share(10);
         shape_limits.max_nodes = shape_limits
             .max_nodes
             .min(cfg.check_min_nodes.saturating_mul(2));
-        let solver = Solver::new(grid.clone(), &candidates);
+        let Some(mut checker) = UniquenessChecker::new(&grid, &candidates, &solution) else {
+            continue;
+        };
         let t0 = Timer::start();
-        let outcome = solver.solve(&start, &shape_limits);
+        let outcome = checker.check(&vec![true; candidates.len()], &shape_limits);
         spent_time += t0.elapsed();
         budget.spend(outcome.nodes);
         spent_nodes += outcome.nodes;
@@ -272,25 +276,25 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
             slack: budget.slack,
             min_nodes: budget.min_nodes,
         };
-        let (mut clues, _removals, nodes, solve_time, checks, max_check_nodes) =
-            minimise(&grid, &candidates, &start, cfg, rng, &mut local);
+        let (clues, _removals, nodes, solve_time, checks, max_check_nodes) =
+            minimise(&grid, &candidates, &mut checker, cfg, rng, &mut local);
         budget.spend(nodes);
         spent_nodes += nodes;
         spent_time += solve_time;
         total_checks += checks;
         peak_nodes = peak_nodes.max(max_check_nodes);
-        let Some((assessment, restored_clues)) = repair_logical_path(
-            &grid,
-            &solution,
-            &candidates,
-            &mut clues,
-            candidate_deadline,
-        ) else {
-            continue;
-        };
-        if !difficulty::meets_quality_target(&grid, clues.len(), &assessment)
-            || assessment.cells != solution
-        {
+        let assessment_deadline = Some(
+            candidate_deadline
+                .unwrap_or(f64::INFINITY)
+                .min(now_ms() + 300.0),
+        );
+        let mut assessment = difficulty::assess(&grid, &clues, n * 12, assessment_deadline);
+        assessment.consistent &= assessment
+            .cells
+            .iter()
+            .zip(&solution)
+            .all(|(&mark, &value)| mark == crate::model::UNKNOWN || mark == value);
+        if !difficulty::meets_quality_target(&grid, clues.len(), &assessment) {
             continue;
         }
         let score = difficulty::quality_score(&grid, clues.len(), &assessment);
@@ -315,7 +319,10 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
                 clue_count,
                 basic_remaining: assessment.basic_remaining,
                 logical_steps: assessment.contradiction_steps,
-                restored_clues,
+                logical_remaining: assessment.remaining,
+                logical_exhausted: assessment.exhausted,
+                logical_solved: assessment.solved(),
+                logical_consistent: assessment.consistent,
                 black_count,
                 elapsed: started.elapsed(),
                 removals,
@@ -346,88 +353,6 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         result.stats.max_check_nodes = peak_nodes;
     }
     best_result
-}
-
-/// Restoring valid givens to a proven unique clue set preserves uniqueness.
-/// Prefer givens that unlock stalled deductions without revealing many opening moves.
-fn repair_logical_path(
-    grid: &Grid,
-    solution: &[u8],
-    candidates: &[(usize, Clue)],
-    clues: &mut Vec<(usize, Clue)>,
-    deadline: Option<f64>,
-) -> Option<(difficulty::Assessment, usize)> {
-    let mut restored = 0;
-    loop {
-        if deadline.is_some_and(|end| now_ms() >= end) {
-            return None;
-        }
-        let mut opening = vec![UNKNOWN; grid.len()];
-        for (cell, _) in clues.iter() {
-            opening[*cell] = WHITE;
-        }
-        let playable = grid.len().saturating_sub(clues.len());
-        let basic_remaining =
-            playable.saturating_sub(deduction_closure(grid, &opening, clues).len());
-        if grid.len() >= 225
-            && basic_remaining < difficulty::minimum_basic_remaining(grid, clues.len())
-        {
-            return None;
-        }
-        let assessment = difficulty::assess(grid, clues, grid.len() * 12, deadline);
-        if !assessment.consistent || deadline.is_some_and(|end| now_ms() >= end) {
-            return None;
-        }
-        if assessment.solved() {
-            return Some((assessment, restored));
-        }
-        if grid.len() < 225
-            || restored >= grid.len().div_ceil(50)
-            || assessment.basic_remaining < difficulty::minimum_basic_remaining(grid, clues.len())
-        {
-            return None;
-        }
-        let mut choices = Vec::new();
-        for (cell, clue) in candidates {
-            if clues.iter().any(|(kept, _)| kept == cell) {
-                continue;
-            }
-            let stalled = clue_step(grid, &assessment.cells, *cell, clue).len()
-                + usize::from(assessment.cells[*cell] == UNKNOWN);
-            if stalled == 0 {
-                continue;
-            }
-            let giveaway = clue_step(grid, &opening, *cell, clue).len();
-            let ambiguity = feasible_masks(grid, *cell, clue).len();
-            choices.push((
-                (stalled.saturating_sub(giveaway) * 64 + stalled * 4 + ambiguity.min(8))
-                    .saturating_sub(giveaway * 8),
-                *cell,
-                clue.clone(),
-            ));
-        }
-        choices.sort_by_key(|(gain, cell, _)| std::cmp::Reverse((*gain, *cell)));
-        let mut chosen = None;
-        for (_, cell, clue) in choices.into_iter().take(8) {
-            let mut trial = clues.clone();
-            trial.push((cell, clue.clone()));
-            let mut trial_opening = vec![UNKNOWN; grid.len()];
-            for (index, _) in &trial {
-                trial_opening[*index] = WHITE;
-            }
-            let free = grid.len().saturating_sub(trial.len());
-            let unresolved =
-                free.saturating_sub(deduction_closure(grid, &trial_opening, &trial).len());
-            if unresolved >= difficulty::minimum_basic_remaining(grid, trial.len()) {
-                chosen = Some((cell, clue));
-                break;
-            }
-        }
-        let (cell, clue) = chosen?;
-        debug_assert_eq!(solution[cell], WHITE);
-        clues.push((cell, clue));
-        restored += 1;
-    }
 }
 
 /// How many of the orthogonal neighbours of `cell` are already black.
@@ -465,7 +390,7 @@ fn blank_region(grid: &Grid, solution: &[u8], clues: &[(usize, Clue)]) -> usize 
 fn minimise(
     grid: &Grid,
     candidates: &[(usize, Clue)],
-    start: &[u8],
+    checker: &mut UniquenessChecker,
     cfg: &GenConfig,
     rng: &mut Rng,
     budget: &mut Budget,
@@ -501,17 +426,18 @@ fn minimise(
         let mut left = queue.len();
         for &i in &queue {
             if budget.exhausted() {
-                return finish(candidates, keep, removals, nodes, solve_time, checks, max_check_nodes);
+                return finish(
+                    candidates,
+                    keep,
+                    removals,
+                    nodes,
+                    solve_time,
+                    checks,
+                    max_check_nodes,
+                );
             }
             left = left.saturating_sub(1);
             keep[i] = false;
-            let trial: Vec<(usize, Clue)> = candidates
-                .iter()
-                .enumerate()
-                .filter(|(k, _)| keep[*k])
-                .map(|(_, c)| c.clone())
-                .collect();
-            let solver = Solver::new(grid.clone(), &trial);
             let t0 = Timer::start();
             let mut limits = budget.share(left + 1);
             if grid.len() >= 225 {
@@ -519,7 +445,7 @@ fn minimise(
             }
             // Preserve the pool for independent candidates when one removal is expensive.
             limits.max_nodes = limits.max_nodes.min(proof_work);
-            let outcome = solver.solve(start, &limits);
+            let outcome = checker.check(&keep, &limits);
             solve_time += t0.elapsed();
             nodes += outcome.nodes;
             budget.spend(outcome.nodes);
@@ -733,7 +659,7 @@ fn manhattan(grid: &Grid, a: usize, b: usize) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solver::Solver;
+    use crate::{model::UNKNOWN, solver::Solver};
 
     #[test]
     fn shape_growth_has_no_preferred_edge_or_quadrant() {
@@ -810,7 +736,11 @@ mod tests {
             puzzle.clues.len(),
             &rating
         ));
-        assert_eq!(rating.cells, puzzle.solution);
+        assert!(rating
+            .cells
+            .iter()
+            .zip(&puzzle.solution)
+            .all(|(&a, &b)| a == UNKNOWN || a == b));
 
         // the stored solution obeys every rule
         assert!(validate(&puzzle.grid, &puzzle.solution, &puzzle.clues).is_empty());
@@ -834,7 +764,10 @@ mod tests {
             let grid = &puzzle.grid;
             let black_at = |x: usize, y: usize| puzzle.solution[grid.idx(x, y)] == BLACK;
             assert!((0..w).any(|x| black_at(x, 0)), "top edge has no wall");
-            assert!((0..w).any(|x| black_at(x, h - 1)), "bottom edge has no wall");
+            assert!(
+                (0..w).any(|x| black_at(x, h - 1)),
+                "bottom edge has no wall"
+            );
             assert!((0..h).any(|y| black_at(0, y)), "left edge has no wall");
             assert!((0..h).any(|y| black_at(w - 1, y)), "right edge has no wall");
         }
@@ -890,7 +823,7 @@ mod tests {
     }
 
     #[test]
-    fn difficulty_selection_prefers_verified_logical_chains() {
+    fn difficulty_selection_compares_reasoning_workload() {
         let mut improved = 0;
         for seed in 1..=12 {
             let mut cfg = GenConfig::for_size(10, 10);
@@ -949,6 +882,16 @@ mod tests {
     }
 
     #[test]
+    fn sat_unique_puzzle_can_stall_in_the_human_reasoner() {
+        let cfg = GenConfig::for_size(20, 20);
+        let result = generate_with(&mut Rng::new(10), &cfg).expect("generation failed");
+        let rating = difficulty::assess(&result.puzzle.grid, &result.puzzle.clues, 4800, None);
+        assert!(rating.consistent && !rating.solved() && !rating.exhausted);
+        assert!(rating.remaining > 0);
+        let solver = Solver::new(result.puzzle.grid.clone(), &result.puzzle.clues);
+        assert!(solver.solve(&solver.fresh_state(), &SolveLimits::unique_check(None)).is_unique());
+    }
+    #[test]
     fn generates_unique_small() {
         check_generated(6, 6, 1, true);
     }
@@ -963,7 +906,3 @@ mod tests {
         check_generated(20, 20, 2024, false);
     }
 }
-
-
-
-

@@ -86,7 +86,7 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
     ),
     (
         "difficulty", "Difficulty effort (1-5)",
-        "Higher effort spends more work simplifying clues. Large boards return the first candidate with a complete logical path and sufficient workload.",
+        "Higher effort spends more work simplifying clues. A constraint solver verifies uniqueness; reasoning progress is assessed separately.",
     ),
     (
         "density",
@@ -347,7 +347,7 @@ pub const EXAMPLE: &str = "\
 #   max_clueless_fraction reject shapes whose biggest clue-free patch is a
 #                         larger fraction of the board than this
 #   limited_generation    enable explicit global limits (default false)
-#   node_budget           search nodes when limited_generation is true
+#   node_budget           SAT work allowance when limited_generation is true
 #   time_budget_ms        milliseconds when limited_generation is true
 #   check_min_nodes       reference proof-work allowance
 #   check_slack           how much one proof may borrow over its fair share

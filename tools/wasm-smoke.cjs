@@ -54,6 +54,7 @@ call("set time_budget_ms 30000");
 const puzzle = call("generate 12345");
 check("generate ok", puzzle.ok === true && puzzle.w === 8, JSON.stringify(puzzle.error));
 check("cells are the board size", puzzle.cells.length === 64, String(puzzle.cells.length));
+check("SAT uniqueness is separate from logical assessment", puzzle.genStats.uniqueVerified === true && puzzle.genStats.solverBackend === "batsat" && typeof puzzle.genStats.logicalSolved === "boolean" && Number.isInteger(puzzle.genStats.logicalRemaining));
 check("clues are present", puzzle.clues.length > 0, puzzle.clues);
 check("clues are sorted indices", /^\d+:\d+;/.test(puzzle.clues), puzzle.clues);
 check(

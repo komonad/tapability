@@ -5,7 +5,8 @@
 //! solver and generator:
 //!
 //! * [`model`] - the board, the clues and the rules (including live feedback)
-//! * [`solver`] - arc consistency plus search, counts solutions up to a limit
+//! * [`solver`] - incremental CDCL SAT with complete solution and uniqueness checks
+//! * [`reasoning`] - deterministic deductions without complete search
 //! * [`generator`] - puzzle generation with uniqueness proofs and bounded logical assessment
 //! * [`difficulty`] - logical progress and one-cell contradiction assessment
 //! * [`config`] - the `key = value` settings the UI edits
@@ -17,6 +18,7 @@ pub mod config;
 pub mod difficulty;
 pub mod generator;
 pub mod model;
+pub mod reasoning;
 pub mod report;
 pub mod rng;
 pub mod solver;

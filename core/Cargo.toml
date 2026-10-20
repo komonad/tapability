@@ -7,3 +7,6 @@ description = "Tapa rules, solver and unique-solution generator, shared by the n
 [lib]
 name = "tapa_core"
 path = "src/lib.rs"
+
+[dependencies]
+batsat = { version = "0.6.0", default-features = false }
