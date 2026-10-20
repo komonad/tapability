@@ -297,6 +297,8 @@ async function main() {
     JSON.stringify(repaired),
   );
 
+  check("the bundled Inter font is loaded",await evaluate(`document.fonts.check('600 24px "Inter"') && getComputedStyle(document.body).fontFamily.includes("Inter")`));
+
   // the canvas must actually be painted: look for wall-coloured pixels
   const painted = await evaluate(`(() => {
     const canvas = document.getElementById("board");
@@ -1253,7 +1255,7 @@ async function main() {
       counts[ui.cells[i]===1?'black':'white']++;
       const pixels=ctx.getImageData(Math.round(i%ui.cols*ui.cell*ui.dpr),Math.round(Math.floor(i/ui.cols)*ui.cell*ui.dpr),Math.floor(ui.cell*ui.dpr),Math.floor(ui.cell*ui.dpr)).data;
       let found=false;
-      for(let k=0;k<pixels.length;k+=4)if(Math.abs(pixels[k]-22)<12 && Math.abs(pixels[k+1]-143)<12 && Math.abs(pixels[k+2]-153)<12){found=true;break;}
+      for(let k=0;k<pixels.length;k+=4)if(Math.abs(pixels[k]-255)<12 && Math.abs(pixels[k+1]-196)<12 && Math.abs(pixels[k+2]-72)<12){found=true;break;}
       counts.outlined+=found?1:0;
     }
     return counts;

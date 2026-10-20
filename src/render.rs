@@ -83,6 +83,7 @@ pub struct Gfx {
     brush_solution_black: HBRUSH,
     brush_highlight: HBRUSH,
     brush_selection: HBRUSH,
+    brush_selected_black: HBRUSH,
     brush_dot: HBRUSH,
 
     pen_grid: HPEN,
@@ -91,7 +92,6 @@ pub struct Gfx {
     pen_wrong: HPEN,
     pen_win: HPEN,
     pen_highlight: HPEN,
-    pen_selection: HPEN,
     pen_error: HPEN,
 
     font_title: HFONT,
@@ -101,7 +101,28 @@ pub struct Gfx {
 }
 
 unsafe fn make_font(height: i32, weight: i32) -> HFONT {
-    let face: Vec<u16> = "Segoe UI\0".encode_utf16().collect();
+    static FONTS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    // GDI font resources remain registered across window and font recreation.
+    FONTS.get_or_init(|| unsafe {
+        for bytes in [
+            include_bytes!("../web/fonts/Inter-regular.ttf").as_slice(),
+            include_bytes!("../web/fonts/Inter-semibold.ttf").as_slice(),
+        ] {
+            let mut count = 0;
+            AddFontMemResourceEx(
+                bytes.as_ptr() as *mut c_void,
+                bytes.len() as u32,
+                ptr::null_mut(),
+                &mut count,
+            );
+        }
+    });
+    let family = if weight >= 600 {
+        "Inter SemiBold\0"
+    } else {
+        "Inter\0"
+    };
+    let face: Vec<u16> = family.encode_utf16().collect();
     CreateFontW(
         -height.max(6),
         0,
@@ -193,7 +214,8 @@ impl Gfx {
             brush_clue: CreateSolidBrush(rgb(253, 248, 226)),
             brush_solution_black: CreateSolidBrush(rgb(150, 158, 178)),
             brush_highlight: CreateSolidBrush(rgb(64, 104, 176)),
-            brush_selection: CreateSolidBrush(rgb(223, 242, 244)),
+            brush_selection: CreateSolidBrush(rgb(255, 245, 224)),
+            brush_selected_black: CreateSolidBrush(rgb(76, 69, 62)),
             brush_dot: CreateSolidBrush(rgb(120, 128, 146)),
             pen_grid: CreatePen(PS_SOLID as i32, 1, rgb(168, 174, 188)),
             pen_border: CreatePen(PS_SOLID as i32, 2, rgb(70, 76, 96)),
@@ -201,7 +223,6 @@ impl Gfx {
             pen_wrong: CreatePen(PS_SOLID as i32, 2, rgb(214, 48, 48)),
             pen_win: CreatePen(PS_SOLID as i32, 3, rgb(46, 158, 66)),
             pen_highlight: CreatePen(PS_SOLID as i32, 2, rgb(255, 196, 72)),
-            pen_selection: CreatePen(PS_SOLID as i32, 2, rgb(22, 143, 153)),
             pen_error: CreatePen(PS_SOLID as i32, 2, rgb(226, 52, 52)),
             font_title: make_font(22, 700),
             font_ui: make_font(15, 400),
@@ -277,6 +298,7 @@ impl Gfx {
             self.brush_solution_black,
             self.brush_highlight,
             self.brush_selection,
+            self.brush_selected_black,
             self.brush_dot,
         ] {
             DeleteObject(b as HGDIOBJ);
@@ -288,7 +310,6 @@ impl Gfx {
             self.pen_wrong,
             self.pen_win,
             self.pen_highlight,
-            self.pen_selection,
             self.pen_error,
         ] {
             DeleteObject(p as HGDIOBJ);
@@ -410,7 +431,7 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
                             g.brush_empty
                         }
                     } else if selected[idx] {
-                        if app.cells[idx]==BLACK {g.brush_highlight} else {g.brush_selection}
+                        if app.cells[idx]==BLACK {g.brush_selected_black} else {g.brush_selection}
                     } else if app.highlight.get(idx).copied().unwrap_or(false) {
                         g.brush_highlight
                     } else {
@@ -542,7 +563,7 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
                 let (x,y)=puzzle.grid.xy(idx);
                 let px=g.grid_x+x as i32*g.cell;
                 let py=g.grid_y+y as i32*g.cell;
-                stroke(hdc,&rect(px+1,py+1,px+g.cell-1,py+g.cell-1),g.pen_selection);
+                stroke(hdc,&rect(px+1,py+1,px+g.cell-1,py+g.cell-1),g.pen_highlight);
             }
 
             // hover highlight
@@ -699,14 +720,44 @@ unsafe fn draw_clue(hdc: HDC, g: &Gfx, clue: &[u8], r: RECT, color: COLORREF) {
             r.top + slot.bottom,
         );
         let s = ((b'0' + value) as char).to_string();
-        text(
+        let old_font = SelectObject(hdc, font as HGDIOBJ);
+        let mut transform: MAT2 = mem::zeroed();
+        transform.eM11.value = 1;
+        transform.eM22.value = 1;
+        let mut bounds: GLYPHMETRICS = mem::zeroed();
+        let measured = GetGlyphOutlineW(
             hdc,
-            font,
-            color,
-            &s,
-            cell,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            (b'0' + value) as u32,
+            GGO_METRICS,
+            &mut bounds,
+            0,
+            ptr::null_mut(),
+            &transform,
         );
+        if measured != GDI_ERROR && bounds.gmBlackBoxY > 0 {
+            let old_align = SetTextAlign(hdc, TA_LEFT | TA_BASELINE);
+            let old_mode = SetBkMode(hdc, TRANSPARENT as i32);
+            let old_color = SetTextColor(hdc, color);
+            let x =
+                (cell.left + cell.right - bounds.gmBlackBoxX as i32) / 2 - bounds.gmptGlyphOrigin.x;
+            let y =
+                (cell.top + cell.bottom - bounds.gmBlackBoxY as i32) / 2 + bounds.gmptGlyphOrigin.y;
+            let glyph = [(b'0' + value) as u16];
+            TextOutW(hdc, x, y, glyph.as_ptr(), 1);
+            SetTextColor(hdc, old_color);
+            SetBkMode(hdc, old_mode);
+            SetTextAlign(hdc, old_align);
+        } else {
+            text(
+                hdc,
+                font,
+                color,
+                &s,
+                cell,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            );
+        }
+        SelectObject(hdc, old_font);
     }
 }
 

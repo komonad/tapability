@@ -1,3 +1,18 @@
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/inter-regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/inter-semibold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
 /* Tapa web front end. The colours mirror src/render.rs so the browser and the
    native window look like the same game. */
 
@@ -27,7 +42,7 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+  font: 14px/1.45 "Inter", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
 }
 
 .app {
@@ -229,7 +244,7 @@ button:disabled {
 }
 
 kbd {
-  font: 11px/1 "Segoe UI", system-ui, sans-serif;
+  font: 11px/1 "Inter", "Microsoft YaHei UI", system-ui, sans-serif;
   padding: 2px 4px;
   border: 1px solid #ccd3e0;
   border-bottom-width: 2px;

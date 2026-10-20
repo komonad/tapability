@@ -31,7 +31,6 @@ const C = {
   wrong: "#d63030",
   win: "#2e9e42",
   highlightOutline: "#ffc448",
-  selectionOutline: "#168f99",
   errorOutline: "#e23434",
   clueText: "#303028",
   clueBad: "#c82020",
@@ -503,14 +502,14 @@ function render() {
     }
   }
 
-  // clue numbers
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
+  // Ink bounds keep digits centred independently of the font's line box.
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
   for (const [idx, text] of ui.clues) {
     const digits = text.split("");
     const count = digits.length;
     const scale = count <= 1 ? 0.66 : count === 2 ? 0.46 : count === 3 ? 0.36 : 0.3;
-    ctx.font = `600 ${Math.max(9, Math.round(cell * scale))}px "Segoe UI", system-ui, sans-serif`;
+    ctx.font = `600 ${Math.max(6, Math.round(cell * scale))}px "Inter", sans-serif`;
     ctx.fillStyle = errors[idx]
       ? C.clueBad
       : ui.doneClues[idx]
@@ -528,7 +527,14 @@ function render() {
       const row = Math.floor(k / ccols);
       const inRow = Math.min(ccols, count - row * ccols);
       const x0 = (cell - cw * inRow) / 2;
-      ctx.fillText(digit, bx + x0 + (k % ccols) * cw + cw / 2, by + row * ch + ch / 2);
+      const bounds = ctx.measureText(digit);
+      const cx = bx + x0 + (k % ccols) * cw + cw / 2;
+      const cy = by + row * ch + ch / 2;
+      ctx.fillText(
+        digit,
+        cx + (bounds.actualBoundingBoxLeft - bounds.actualBoundingBoxRight) / 2,
+        cy + (bounds.actualBoundingBoxAscent - bounds.actualBoundingBoxDescent) / 2,
+      );
     });
   }
 
@@ -574,9 +580,9 @@ function render() {
   if (!showSolution) {
     for (const i of state.deductionCells || []) {
       const x=(i%cols)*cell,y=Math.floor(i/cols)*cell;
-      ctx.fillStyle="rgba(22,143,153,0.16)";
+      ctx.fillStyle="rgba(255,196,72,0.16)";
       ctx.fillRect(x+1,y+1,cell-2,cell-2);
-      ctx.strokeStyle=C.selectionOutline; ctx.lineWidth=2;
+      ctx.strokeStyle=C.highlightOutline; ctx.lineWidth=2;
       ctx.strokeRect(x+1,y+1,cell-2,cell-2);
     }
   }
@@ -636,7 +642,7 @@ function render() {
 
 function placeholder(ctx, width, height, text) {
   ctx.fillStyle = C.dim;
-  ctx.font = '15px "Segoe UI", system-ui, sans-serif';
+  ctx.font = '15px "Inter", "Microsoft YaHei UI", system-ui, sans-serif';
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(text, width / 2, height / 2);
@@ -1486,6 +1492,10 @@ els["btn-bench"].addEventListener("click", () => batch("bench"));
 els.outputClose.addEventListener("click", hideOutput);
 
 async function start() {
+  await Promise.allSettled([
+    document.fonts.load('400 14px "Inter"'),
+    document.fonts.load('600 24px "Inter"'),
+  ]);
   rememberInlineText();
   setLanguage(readLang(), false);
   buildLangSelect();

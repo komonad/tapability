@@ -305,6 +305,11 @@ node tools/serve.cjs 8081 some/dir   # serve another directory on another port
 | `tools/native-check.ps1` | desktop GUI check: posts real mouse messages and compares screenshots |
 | `build-web.ps1` | builds and installs `web/tapa.wasm` |
 
+The browser and native renderer bundle Inter at regular and semibold weights.
+Clue digits are centred using their rendered ink bounds. Font subsets and the
+SIL Open Font License are in `web/fonts/`; rendering requires no system font
+installation or external font service.
+
 ## How the solver works
 
 Complete solving uses [BatSat](https://github.com/c-cube/batsat), a pure Rust
