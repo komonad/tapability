@@ -531,7 +531,7 @@ impl App {
             let mut rng = tapa_core::rng::Rng::new(seed);
             let result = tapa_core::generator::generate_with(&mut rng, &cfg)
                 .map(|r| r.puzzle)
-                .ok_or_else(|| format!("generation failed (seed {seed})"));
+                .ok_or_else(|| format!("no puzzle met the quality target within the explicitly enabled limits (seed {seed})"));
             *slot.lock().unwrap() = Some(result);
             unsafe {
                 PostMessageW(hwnd as HWND, WM_PUZZLE_READY, 0, 0);

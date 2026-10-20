@@ -11,7 +11,7 @@ const path = require("node:path");
 const wasmPath = process.argv[2] || path.join(__dirname, "..", "web", "tapa.wasm");
 const module_ = new WebAssembly.Module(fs.readFileSync(wasmPath));
 const instance = new WebAssembly.Instance(module_, {
-  env: { tapa_now_ms: () => performance.now() },
+  env: { tapa_now_ms: () => performance.now(), tapa_generation_progress: () => {} },
 });
 const ex = instance.exports;
 

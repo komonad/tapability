@@ -5,26 +5,27 @@
 //!      no 2x2 is fully black and no black cell is completely surrounded by
 //!      black cells (such a cell would not be pinned down by any clue);
 //!   2. take every white cell that has at least one black neighbour as a clue
-//!      candidate 闂?at this point the clue set is maximal;
+//!      candidate; at this point the clue set is maximal;
 //!   3. prove the maximal clue set has a unique solution (otherwise the shape is
 //!      unusable and we grow another one);
-//!   4. remove clues one by one in random order, keeping every removal that
-//!      still leaves a unique solution. The result is a puzzle that is
-//!      *minimal* when the proof budget completes every removal check;
-//!   5. compare distinct shapes using bounded one-cell contradiction analysis,
-//!      preferring completed logical solutions before unresolved bottlenecks.
+//!   4. remove clues one by one in random order, keeping each removal only
+//!      after a successful uniqueness proof;
+//!   5. restore valid givens when they unlock a stalled logical path;
+//!   6. screen completed logical paths against size-normalized workload targets
+//!      and rank qualifying candidates by distance to the target workload.
 //!
 //! Every accepted puzzle is therefore guaranteed to have exactly one solution,
 //! and that solution is the shape the generator started from.
 
 use std::time::Duration;
 
-use crate::clock::{now_ms, Timer};
+use crate::clock::{generation_progress, now_ms, Timer};
 use crate::config::Settings;
 use crate::difficulty;
 use crate::model::{
-    clue_is_showable, clue_of, largest_blank_region, largest_clueless_region, validate, Clue, Grid,
-    Puzzle, BLACK, ORTHO, UNKNOWN, WHITE,
+    clue_is_showable, clue_of, clue_step, feasible_masks, largest_blank_region,
+    largest_clueless_region, one_step_deductions, validate, Clue, Grid, Puzzle, BLACK, ORTHO,
+    UNKNOWN, WHITE,
 };
 use crate::rng::Rng;
 use crate::solver::{SolveLimits, Solver};
@@ -54,7 +55,7 @@ pub struct GenConfig {
     pub max_clueless_region: usize,
 }
 
-/// A shared budget pool. Instead of a hard per-proof cap, each proof gets
+/// A shared proof pool. Before per-candidate work slicing, each proof gets
 /// `remaining / checks_left * slack`, so a proof that needs a little more than
 /// its fair share can still finish while the pool has room.
 struct Budget {
@@ -109,12 +110,12 @@ impl GenConfig {
             w,
             h,
             difficulty: 3,
-            max_attempts: 200,
+            max_attempts: usize::MAX,
             black_lo: 0.50,
             black_hi: 0.60,
             deadline: None,
-            node_budget: 150_000,
-            time_budget: Duration::from_millis(2_000),
+            node_budget: u64::MAX,
+            time_budget: Duration::ZERO,
             check_min_nodes: 3_000,
             check_slack: 3,
             max_clueless_region: (area as f64 * 0.15).ceil() as usize,
@@ -128,12 +129,24 @@ impl GenConfig {
             w: settings.size,
             difficulty: settings.difficulty,
             h: settings.size,
-            max_attempts: settings.max_attempts,
+            max_attempts: if settings.limited_generation {
+                settings.max_attempts
+            } else {
+                usize::MAX
+            },
             black_lo: settings.density_lo,
             black_hi: settings.density_hi,
             deadline: None,
-            node_budget: settings.node_budget,
-            time_budget: Duration::from_millis(settings.time_budget_ms),
+            node_budget: if settings.limited_generation {
+                settings.node_budget
+            } else {
+                u64::MAX
+            },
+            time_budget: if settings.limited_generation {
+                Duration::from_millis(settings.time_budget_ms)
+            } else {
+                Duration::ZERO
+            },
             check_min_nodes: settings.check_min_nodes,
             check_slack: settings.check_slack,
             max_clueless_region: (area as f64 * settings.max_clueless_fraction).ceil() as usize,
@@ -145,6 +158,9 @@ impl GenConfig {
 pub struct GenStats {
     pub attempts: usize,
     pub clue_count: usize,
+    pub basic_remaining: usize,
+    pub logical_steps: usize,
+    pub restored_clues: usize,
     pub black_count: usize,
     pub elapsed: Duration,
     pub removals: usize,
@@ -187,6 +203,7 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
             break;
         }
         attempts += 1;
+        generation_progress(attempts, accepted);
 
         let fraction = cfg.black_lo + (cfg.black_hi - cfg.black_lo) * (rng.below(1000) as f64 / 1000.0);
         let target = (n as f64 * fraction) as usize;
@@ -218,7 +235,8 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         // only a shape filter, so it draws a small share of the pool: a shape
         // that cannot be pinned down quickly is dropped instead of burning time.
         let start = vec![UNKNOWN; n];
-        let shape_limits = budget.share(10);
+        let mut shape_limits = budget.share(10);
+        shape_limits.max_nodes = shape_limits.max_nodes.min(60_000.max(cfg.check_min_nodes));
         let solver = Solver::new(grid.clone(), &candidates);
         let t0 = Timer::start();
         let outcome = solver.solve(&start, &shape_limits);
@@ -249,14 +267,29 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
             slack: budget.slack,
             min_nodes: budget.min_nodes,
         };
-        let (clues, removals, nodes, solve_time, checks, max_check_nodes) =
+        let (mut clues, _removals, nodes, solve_time, checks, max_check_nodes) =
             minimise(&grid, &candidates, &start, cfg, rng, &mut local);
         budget.spend(nodes);
         spent_nodes += nodes;
         spent_time += solve_time;
         total_checks += checks;
         peak_nodes = peak_nodes.max(max_check_nodes);
-        let score = difficulty_score(&grid, &clues, candidate_deadline);
+        let Some((assessment, restored_clues)) = repair_logical_path(
+            &grid,
+            &solution,
+            &candidates,
+            &mut clues,
+            candidate_deadline,
+        ) else {
+            continue;
+        };
+        if !difficulty::meets_quality_target(&grid, clues.len(), &assessment)
+            || assessment.cells != solution
+        {
+            continue;
+        }
+        let score = difficulty::quality_score(&grid, clues.len(), &assessment);
+        let removals = candidates.len().saturating_sub(clues.len());
         let clue_count = clues.len();
         let blank_region = blank_region(&grid, &solution, &clues);
         let black_count = solution.iter().filter(|&&c| c == BLACK).count();
@@ -275,6 +308,9 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
             stats: GenStats {
                 attempts,
                 clue_count,
+                basic_remaining: assessment.basic_remaining,
+                logical_steps: assessment.contradiction_steps,
+                restored_clues,
                 black_count,
                 elapsed: started.elapsed(),
                 removals,
@@ -291,7 +327,8 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
             best_result = Some(result);
         }
         accepted += 1;
-        if accepted >= cfg.difficulty.max(1) {
+        generation_progress(attempts, accepted);
+        if accepted >= cfg.difficulty.max(1) || (score.0 >= 980 && score.1 >= 975) {
             break;
         }
     }
@@ -306,19 +343,85 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
     best_result
 }
 
-/// Solvable one-cell contradiction chains outrank unresolved search bottlenecks.
-fn difficulty_score(
+/// Restoring valid givens to a proven unique clue set preserves uniqueness.
+/// Prefer givens that unlock stalled deductions without revealing many opening moves.
+fn repair_logical_path(
     grid: &Grid,
-    clues: &[(usize, Clue)],
+    solution: &[u8],
+    candidates: &[(usize, Clue)],
+    clues: &mut Vec<(usize, Clue)>,
     deadline: Option<f64>,
-) -> (bool, usize, usize, usize) {
-    let assessment = difficulty::assess(grid, clues, grid.len() * 12, deadline);
-    (
-        assessment.solved(),
-        assessment.contradiction_steps.min(12),
-        assessment.basic_remaining,
-        grid.len() - clues.len(),
-    )
+) -> Option<(difficulty::Assessment, usize)> {
+    let mut restored = 0;
+    loop {
+        if deadline.is_some_and(|end| now_ms() >= end) {
+            return None;
+        }
+        let mut opening = vec![UNKNOWN; grid.len()];
+        for (cell, _) in clues.iter() {
+            opening[*cell] = WHITE;
+        }
+        let playable = grid.len().saturating_sub(clues.len());
+        let basic_remaining =
+            playable.saturating_sub(one_step_deductions(grid, &opening, clues).len());
+        if grid.len() >= 225 && basic_remaining * 100 < playable * 50 {
+            return None;
+        }
+        let assessment = difficulty::assess(grid, clues, grid.len() * 12, deadline);
+        if !assessment.consistent || deadline.is_some_and(|end| now_ms() >= end) {
+            return None;
+        }
+        if assessment.solved() {
+            return Some((assessment, restored));
+        }
+        let playable = grid.len().saturating_sub(clues.len());
+        if grid.len() < 225
+            || restored >= grid.len().div_ceil(50)
+            || assessment.basic_remaining * 100 < playable * 50
+        {
+            return None;
+        }
+        let mut choices = Vec::new();
+        for (cell, clue) in candidates {
+            if clues.iter().any(|(kept, _)| kept == cell) {
+                continue;
+            }
+            let stalled = clue_step(grid, &assessment.cells, *cell, clue).len()
+                + usize::from(assessment.cells[*cell] == UNKNOWN);
+            if stalled == 0 {
+                continue;
+            }
+            let giveaway = clue_step(grid, &opening, *cell, clue).len();
+            let ambiguity = feasible_masks(grid, *cell, clue).len();
+            choices.push((
+                (stalled.saturating_sub(giveaway) * 64 + stalled * 4 + ambiguity.min(8))
+                    .saturating_sub(giveaway * 8),
+                *cell,
+                clue.clone(),
+            ));
+        }
+        choices.sort_by_key(|(gain, cell, _)| std::cmp::Reverse((*gain, *cell)));
+        let mut chosen = None;
+        for (_, cell, clue) in choices.into_iter().take(8) {
+            let mut trial = clues.clone();
+            trial.push((cell, clue.clone()));
+            let mut trial_opening = vec![UNKNOWN; grid.len()];
+            for (index, _) in &trial {
+                trial_opening[*index] = WHITE;
+            }
+            let free = grid.len().saturating_sub(trial.len());
+            let unresolved =
+                free.saturating_sub(one_step_deductions(grid, &trial_opening, &trial).len());
+            if unresolved * 100 >= free * 50 {
+                chosen = Some((cell, clue));
+                break;
+            }
+        }
+        let (cell, clue) = chosen?;
+        debug_assert_eq!(solution[cell], WHITE);
+        clues.push((cell, clue));
+        restored += 1;
+    }
 }
 
 /// How many of the orthogonal neighbours of `cell` are already black.
@@ -401,7 +504,10 @@ fn minimise(
                 .collect();
             let solver = Solver::new(grid.clone(), &trial);
             let t0 = Timer::start();
-            let outcome = solver.solve(start, &budget.share(left + 1));
+            let mut limits = budget.share(left + 1);
+            // Preserve the pool for independent candidates when one removal is expensive.
+            limits.max_nodes = limits.max_nodes.min(30_000.max(cfg.check_min_nodes));
+            let outcome = solver.solve(start, &limits);
             solve_time += t0.elapsed();
             nodes += outcome.nodes;
             budget.spend(outcome.nodes);
@@ -596,6 +702,13 @@ mod tests {
         }
         let result = generate_with(&mut rng, &cfg).expect("generation failed");
         let puzzle = result.puzzle;
+        let rating = difficulty::assess(&puzzle.grid, &puzzle.clues, puzzle.grid.len() * 12, None);
+        assert!(difficulty::meets_quality_target(
+            &puzzle.grid,
+            puzzle.clues.len(),
+            &rating
+        ));
+        assert_eq!(rating.cells, puzzle.solution);
 
         // the stored solution obeys every rule
         assert!(validate(&puzzle.grid, &puzzle.solution, &puzzle.clues).is_empty());
@@ -685,13 +798,52 @@ mod tests {
             let baseline = generate_with(&mut Rng::new(seed), &cfg).unwrap();
             cfg.difficulty = 3;
             let selected = generate_with(&mut Rng::new(seed), &cfg).unwrap();
-            let before = difficulty_score(&baseline.puzzle.grid, &baseline.puzzle.clues, None);
-            let after = difficulty_score(&selected.puzzle.grid, &selected.puzzle.clues, None);
+            let before_rating =
+                difficulty::assess(&baseline.puzzle.grid, &baseline.puzzle.clues, 1200, None);
+            let before = difficulty::quality_score(
+                &baseline.puzzle.grid,
+                baseline.puzzle.clues.len(),
+                &before_rating,
+            );
+            let after_rating =
+                difficulty::assess(&selected.puzzle.grid, &selected.puzzle.clues, 1200, None);
+            let after = difficulty::quality_score(
+                &selected.puzzle.grid,
+                selected.puzzle.clues.len(),
+                &after_rating,
+            );
             assert!(after >= before, "seed {seed}: {before:?} -> {after:?}");
             improved += usize::from(after > before);
             println!("seed {seed}: rating {before:?} -> {after:?}");
         }
         assert!(improved > 0);
+    }
+
+    #[test]
+    fn global_limits_are_explicitly_opt_in() {
+        let mut settings = Settings::default();
+        settings.node_budget = 1;
+        settings.time_budget_ms = 1;
+        settings.max_attempts = 1;
+        let cfg = GenConfig::from_settings(&settings);
+        assert_eq!(cfg.node_budget, u64::MAX);
+        assert!(cfg.time_budget.is_zero());
+        assert_eq!(cfg.max_attempts, usize::MAX);
+        settings.limited_generation = true;
+        let cfg = GenConfig::from_settings(&settings);
+        assert_eq!(cfg.node_budget, 1);
+        assert_eq!(cfg.time_budget.as_millis(), 1);
+        assert_eq!(cfg.max_attempts, 1);
+    }
+
+    #[test]
+    fn expired_generation_never_returns_a_lower_quality_fallback() {
+        let mut cfg = GenConfig::for_size(20, 20);
+        cfg.deadline = Some(now_ms() - 1.0);
+        assert!(generate_with(&mut Rng::new(1), &cfg).is_none());
+        cfg.deadline = None;
+        cfg.node_budget = 0;
+        assert!(generate_with(&mut Rng::new(1), &cfg).is_none());
     }
 
     #[test]

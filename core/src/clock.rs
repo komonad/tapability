@@ -35,6 +35,19 @@ mod imp {
 
 pub use imp::now_ms;
 
+/// Report candidate search progress to the browser host.
+#[cfg(target_arch = "wasm32")]
+pub fn generation_progress(attempts: usize, qualified: usize) {
+    #[link(wasm_import_module = "env")]
+    extern "C" {
+        fn tapa_generation_progress(attempts: u32, qualified: u32);
+    }
+    unsafe { tapa_generation_progress(attempts.min(u32::MAX as usize) as u32, qualified as u32) }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn generation_progress(_attempts: usize, _qualified: usize) {}
+
 /// Milliseconds since the clock was started.
 #[derive(Clone, Copy, Debug)]
 pub struct Timer {

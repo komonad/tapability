@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 pub struct Settings {
     /// Board is `size x size`.
     pub size: usize,
-    /// Number of distinct candidate puzzles compared for logical difficulty.
+    /// Enable explicitly configured global generation limits.
+    pub limited_generation: bool,
+    /// Number of quality-qualified candidates compared before completion.
     pub difficulty: usize,
     /// `None` means "pick a seed from the clock".
     pub seed: Option<u64>,
@@ -38,16 +40,15 @@ impl Default for Settings {
     fn default() -> Settings {
         Settings {
             size: 20,
+            limited_generation: false,
             difficulty: 3,
             seed: None,
-            // Denser boards are both prettier (less empty space) and much faster
-            // to prove unique: at 0.50-0.60 a 20x20 generates in tens of
-            // milliseconds instead of a second.
+            // Coverage controls answer shape independently of logical workload.
             density_lo: 0.50,
             density_hi: 0.60,
             max_clueless_fraction: 0.15,
-            node_budget: 150_000,
-            time_budget_ms: 2_000,
+            node_budget: 3_000_000,
+            time_budget_ms: 15_000,
             check_min_nodes: 3_000,
             check_slack: 3,
             max_attempts: 200,
@@ -85,7 +86,7 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
     ),
     (
         "difficulty", "Difficulty effort (1-5)",
-        "Compare distinct puzzles, preferring those solvable with one-cell contradiction tests. Higher effort searches more candidates within the budget.",
+        "Compare candidates that pass logical-path and workload targets. Higher effort compares more qualified puzzles and can take longer.",
     ),
     (
         "density",
@@ -96,31 +97,6 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
         "max_clueless_fraction",
         "Max clueless fraction",
         "Reject a shape when its biggest patch with no clue at all is larger than this share of the board.",
-    ),
-    (
-        "node_budget",
-        "Node budget",
-        "Search nodes allowed for one whole generation, shared between all uniqueness proofs.",
-    ),
-    (
-        "time_budget_ms",
-        "Time budget (ms)",
-        "Milliseconds allowed for one whole generation. 0 means no time limit.",
-    ),
-    (
-        "check_min_nodes",
-        "Min nodes per proof",
-        "Smallest node budget a single uniqueness proof always gets, so cheap proofs are never starved.",
-    ),
-    (
-        "check_slack",
-        "Budget slack",
-        "How much one proof may borrow over its fair share of the pool. 1 = strictly equal shares.",
-    ),
-    (
-        "max_attempts",
-        "Max attempts",
-        "How many random shapes to try before giving up on this configuration.",
     ),
     (
         "seed",
@@ -142,6 +118,17 @@ impl Settings {
                     )));
                 }
                 self.size = n;
+            }
+            "limited_generation" => {
+                self.limited_generation = match value {
+                    "true" | "1" => true,
+                    "false" | "0" => false,
+                    _ => {
+                        return Err(ConfigError(
+                            "limited_generation: expected true or false".into(),
+                        ))
+                    }
+                }
             }
             "difficulty" => {
                 let n = number(value, key)?;
@@ -204,6 +191,7 @@ impl Settings {
     pub fn value_of(&self, key: &str) -> String {
         match key {
             "size" => self.size.to_string(),
+            "limited_generation" => self.limited_generation.to_string(),
             "difficulty" => self.difficulty.to_string(),
             "density" => format!("{:.2}-{:.2}", self.density_lo, self.density_hi),
             "max_clueless_fraction" => format!("{:.2}", self.max_clueless_fraction),
@@ -222,6 +210,10 @@ impl Settings {
         let mut out = String::from("# written by the tapa settings panel\n");
         out.push_str(&format!("size = {}\n", self.size));
         out.push_str(&format!("difficulty = {}\n", self.difficulty));
+        out.push_str(&format!(
+            "limited_generation = {}\n",
+            self.limited_generation
+        ));
         if let Some(seed) = self.seed {
             out.push_str(&format!("seed = {seed}\n"));
         }
@@ -349,27 +341,29 @@ impl Settings {
 pub const EXAMPLE: &str = "\
 # Tapa generation settings. Every line is optional.
 #   size                  board is size x size (3..60)
-#   difficulty            distinct candidate puzzles compared for difficulty (1..5)
+#   difficulty            quality-qualified candidates compared for difficulty (1..5)
 #   seed                  fixed seed; omit for a clock-based seed
 #   density               fraction of black cells, LO-HI
 #   max_clueless_fraction reject shapes whose biggest clue-free patch is a
 #                         larger fraction of the board than this
-#   node_budget           nodes for one whole generation (shared adaptively)
-#   time_budget_ms        milliseconds for one whole generation
+#   limited_generation    enable explicit global limits (default false)
+#   node_budget           search nodes when limited_generation is true
+#   time_budget_ms        milliseconds when limited_generation is true
 #   check_min_nodes       floor for a single uniqueness proof
 #   check_slack           how much one proof may borrow over its fair share
 #   max_attempts          how many shapes to try before giving up
 #
 # Use it with:       tapa --config tapa.conf
 # Override one line: tapa --config tapa.conf --set size=24
-# In the game: press F2 to open the settings panel; changes are remembered.
+# In the game: generation settings are in the control column.
 
 size = 20
 difficulty = 3
+limited_generation = false
 density = 0.50-0.60
 max_clueless_fraction = 0.15
-node_budget = 150000
-time_budget_ms = 2000
+node_budget = 3000000
+time_budget_ms = 15000
 check_min_nodes = 3000
 check_slack = 3
 max_attempts = 200
@@ -452,7 +446,10 @@ mod tests {
     #[test]
     fn parses_the_example_file() {
         let mut s = Settings::default();
-        for line in EXAMPLE.lines() {
+        for line in EXAMPLE
+            .lines()
+            .chain(include_str!("../../tapa.conf").lines())
+        {
             let line = line.split('#').next().unwrap_or("").trim();
             if line.is_empty() {
                 continue;

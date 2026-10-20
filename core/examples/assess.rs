@@ -1,7 +1,11 @@
 //! Compare puzzles using the same deterministic deductions and bounded solver.
 //! Input lines: width<TAB>height<TAB>label<TAB>cell=digits;cell=digits.
 //! A digit 0 represents a clue with no black neighbours.
-use std::{env, fs, time::Instant};
+use std::{
+    env, fs,
+    io::{self, Write},
+    time::Instant,
+};
 use tapa_core::{
     clock::now_ms,
     config::Settings,
@@ -56,13 +60,14 @@ fn assess(label: &str, grid: &Grid, clues: &[(usize, Clue)], generation_ms: f64)
     };
     let logical = difficulty::assess(grid, clues, grid.len() * 12, Some(now_ms() + 3000.0));
     let singles = clues.iter().filter(|(_, clue)| clue.len() == 1).count();
-    println!("{label},{},{},{},{first},{remaining},{},{},{density:.4},{cycles},{singles},{generation_ms:.2},{},{},{}",
-        grid.w, grid.h, clues.len(), result.nodes, result.is_unique(), logical.remaining, logical.contradiction_steps, logical.exhausted);
+    println!("{label},{},{},{},{first},{remaining},{},{},{density:.4},{cycles},{singles},{generation_ms:.2},{},{},{},{}",
+        grid.w, grid.h, clues.len(), result.nodes, result.is_unique(), logical.remaining, logical.contradiction_steps, logical.exhausted, difficulty::meets_quality_target(grid, clues.len(), &logical));
+    io::stdout().flush().expect("flush assessment output");
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().collect();
-    println!("label,width,height,clues,first_forced,remaining,search_nodes,unique,black_fraction,cycles,single_clues,generation_ms,logical_remaining,contradiction_steps,rating_exhausted");
+    println!("label,width,height,clues,first_forced,remaining,search_nodes,unique,black_fraction,cycles,single_clues,generation_ms,logical_remaining,contradiction_steps,rating_exhausted,quality_passed");
     if let Some(path) = args.get(1).filter(|p| p.as_str() != "-") {
         for line in fs::read_to_string(path)?
             .trim_start_matches('\u{feff}')
@@ -95,7 +100,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let count: u64 = args.get(2).map(|s| s.parse()).transpose()?.unwrap_or(12);
-    for size in [20, 25] {
+    let sizes = args
+        .get(3)
+        .map(|s| {
+            s.split(',')
+                .map(str::parse)
+                .collect::<Result<Vec<usize>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_else(|| vec![20, 25]);
+    for size in sizes {
         let settings = Settings {
             size,
             ..Settings::default()
@@ -112,7 +126,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     start.elapsed().as_secs_f64() * 1000.0,
                 );
             } else {
-                eprintln!("generation failed: size={size}, seed={seed}");
+                eprintln!(
+                    "generation failed: size={size}, seed={seed}, elapsed={:.0}ms",
+                    start.elapsed().as_secs_f64() * 1000.0
+                );
             }
         }
     }

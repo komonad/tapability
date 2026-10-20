@@ -5,7 +5,6 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
-use crate::clock::now_ms;
 use crate::config::Settings;
 use crate::generator::{generate_with, GenConfig};
 use crate::model::validate;
@@ -20,11 +19,13 @@ pub fn print_puzzles(count: usize, settings: &Settings, seed: u64) -> String {
     for k in 0..count {
         let this_seed = seed.wrapping_add(k as u64);
         let mut rng = Rng::new(this_seed);
-        let mut cfg = GenConfig::from_settings(settings);
-        cfg.deadline = Some(now_ms() + 120_000.0);
+        let cfg = GenConfig::from_settings(settings);
         match generate_with(&mut rng, &cfg) {
             None => {
-                let _ = writeln!(out, "seed {this_seed}: generation failed\n");
+                let _ = writeln!(
+                    out,
+                    "seed {this_seed}: no candidate met the quality target within the explicitly enabled limits\n"
+                );
             }
             Some(result) => {
                 let puzzle = result.puzzle;
@@ -40,6 +41,13 @@ pub fn print_puzzles(count: usize, settings: &Settings, seed: u64) -> String {
                     result.stats.elapsed.as_secs_f64(),
                     w = settings.size,
                     h = settings.size
+                );
+                let _ = writeln!(
+                    out,
+                    "quality: logical path verified, basic_left={} steps={} restored={}",
+                    result.stats.basic_remaining,
+                    result.stats.logical_steps,
+                    result.stats.restored_clues
                 );
                 out.push_str(&render_puzzle(&puzzle));
                 out.push_str("solution:\n");
@@ -74,8 +82,7 @@ pub fn bench(count: usize, settings: &Settings, seed: u64) -> String {
     for k in 0..count {
         let this_seed = seed.wrapping_add(k as u64);
         let mut rng = Rng::new(this_seed);
-        let mut cfg = GenConfig::from_settings(settings);
-        cfg.deadline = Some(now_ms() + 120_000.0);
+        let cfg = GenConfig::from_settings(settings);
         match generate_with(&mut rng, &cfg) {
             None => {
                 failures += 1;

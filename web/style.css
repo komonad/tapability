@@ -437,3 +437,5 @@ kbd {
 }
 .density-range input:focus-visible::-webkit-slider-thumb { outline: 3px solid #9fc9ff; }
 .density-range input:focus-visible::-moz-range-thumb { outline: 3px solid #9fc9ff; }
+
+#btn-cancel-generation[hidden] { display: none; }

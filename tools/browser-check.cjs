@@ -163,7 +163,7 @@ async function main() {
     JSON.stringify(summary.genStats),
   );
   check("canvas has a backing store", summary.canvasW > 100, String(summary.canvasW));
-  check("settings column has every field", summary.fields === 10, String(summary.fields));
+  check("settings column has every field", summary.fields === 5, String(summary.fields));
 
   const guideLayout = await evaluate(`(() => {
     const guide = document.querySelector('.guide');
@@ -1201,7 +1201,7 @@ async function main() {
         cs.display !== "none" && Number(cs.opacity) > 0.5;
     };
     return {
-      buttons: [...document.querySelectorAll(".panel button")].map((b) => ({
+      buttons: [...document.querySelectorAll(".panel button:not([hidden])")].map((b) => ({
         id: b.id, text: (b.textContent || "").trim(), visible: visible(b),
       })),
       labels: [...document.querySelectorAll(".field label")].map((l) => ({
@@ -1220,17 +1220,31 @@ async function main() {
   );
   check(
     "every setting label is visible on a phone viewport",
-    phone.labels.length >= 9 && phone.labels.every((l) => l.visible && l.text.length > 0),
+    phone.labels.length >= 5 && phone.labels.every((l) => l.visible && l.text.length > 0),
     JSON.stringify(phone.labels.filter((l) => !l.visible || !l.text)),
   );
   check(
     "every setting input is visible on a phone viewport",
-    phone.inputs.length >= 9 && phone.inputs.every(Boolean),
+    phone.inputs.length >= 5 && phone.inputs.every(Boolean),
     JSON.stringify(phone.inputs),
   );
   check("the rules introduction survives a phone viewport", phone.intro.length > 40, phone.intro);
   await call("Emulation.clearDeviceMetricsOverride");
   await sleep(300);
+
+  const beforeCancel = await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,undo:ui.state.canUndo,size:ui.state.w})`);
+  await evaluate(`send('set size 60')`);
+  await evaluate(`void generate(${beforeCancel.seed + 1})`);
+  await waitFor(`generationTask && ui.busy && !document.getElementById('btn-cancel-generation').hidden`, "generation can be cancelled");
+  await evaluate(`document.getElementById('btn-cancel-generation').click()`);
+  await waitFor(`!ui.busy && generationTask === null`, "cancelling ends the candidate worker");
+  const afterCancel = await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,undo:ui.state.canUndo})`);
+  check("cancelling preserves the current game and undo availability",
+    beforeCancel.cells === afterCancel.cells && beforeCancel.seed === afterCancel.seed && beforeCancel.undo === afterCancel.undo,
+    JSON.stringify(afterCancel));
+  await evaluate(`send('set size ${beforeCancel.size}')`);
+  check("ordinary settings do not expose resource caps", await evaluate(`!document.querySelector('input[data-key=node_budget],input[data-key=time_budget_ms],input[data-key=max_attempts]')`));
+  check("generated puzzles carry a verified logical path", await evaluate(`ui.state.genStats.qualityVerified === true`));
 
   // ---- no stray JavaScript errors ----------------------------------------
   check("no uncaught JavaScript errors", consoleErrors.length === 0, consoleErrors.join(" | "));

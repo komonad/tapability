@@ -62,6 +62,8 @@ struct GenSummary {
     ms: f64,
     attempts: usize,
     nodes: u64,
+    basic_remaining: usize,
+    logical_steps: usize,
 }
 
 struct Engine {
@@ -159,15 +161,6 @@ impl Engine {
     }
 
     fn new_puzzle(&mut self, seed: u64) {
-        self.seed = seed;
-        self.solved = false;
-        self.show_solution = false;
-        self.history.clear();
-        self.last_changed = None;
-        self.anchor = None;
-        self.drag = None;
-        self.wrong.clear();
-        self.output.clear();
         self.set_status(
             Kind::Info,
             "generating",
@@ -179,6 +172,15 @@ impl Engine {
         let mut rng = Rng::new(seed);
         match generate_with(&mut rng, &cfg) {
             Some(result) => {
+                self.seed = seed;
+                self.solved = false;
+                self.show_solution = false;
+                self.history.clear();
+                self.last_changed = None;
+                self.anchor = None;
+                self.drag = None;
+                self.wrong.clear();
+                self.output.clear();
                 let mut puzzle = result.puzzle;
                 puzzle.seed = seed;
                 let n = puzzle.grid.len();
@@ -192,21 +194,19 @@ impl Engine {
                     ms: result.stats.elapsed.as_secs_f64() * 1000.0,
                     attempts: result.stats.attempts,
                     nodes: result.stats.nodes,
+                    basic_remaining: result.stats.basic_remaining,
+                    logical_steps: result.stats.logical_steps,
                 });
                 self.refresh_derived();
                 self.refresh_status();
             }
             None => {
-                self.puzzle = None;
-                self.cells.clear();
-                self.wrong.clear();
-                self.stats = None;
                 self.set_status(
                     Kind::Bad,
                     "generation_failed",
                     &[seed as i64],
                     format!(
-                        "generation failed (seed {seed}); try a smaller board or a bigger budget"
+                        "no puzzle met the logical quality target within the explicitly enabled limits (seed {seed})"
                     ),
                 );
             }
@@ -706,8 +706,8 @@ impl Engine {
         match &self.stats {
             None => out.push_str("null"),
             Some(stats) => out.push_str(&format!(
-                "{{\"clues\":{},\"w\":{},\"h\":{},\"ms\":{:.0},\"attempts\":{},\"nodes\":{}}}",
-                stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes
+                "{{\"clues\":{},\"w\":{},\"h\":{},\"ms\":{:.0},\"attempts\":{},\"nodes\":{},\"qualityVerified\":true,\"basicRemaining\":{},\"logicalSteps\":{}}}",
+                stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes, stats.basic_remaining, stats.logical_steps
             )),
         }
         out.push_str(&format!(
@@ -896,6 +896,28 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_quality_search_preserves_the_current_puzzle_and_marks() {
+        let mut engine = engine_with_puzzle(6, 42);
+        let free = engine.cells.iter().position(|&cell| cell == UNKNOWN).unwrap();
+        engine
+            .command(&format!("paint begin {} {} 1", free % 6, free / 6))
+            .unwrap();
+        engine.command("paint end").unwrap();
+        let old_seed = engine.seed;
+        let old_cells = engine.cells.clone();
+        let old_history = engine.history.clone();
+        engine.settings.node_budget = 0;
+        engine.settings.limited_generation = true;
+        engine.new_puzzle(old_seed.wrapping_add(1));
+        assert_eq!(engine.seed, old_seed);
+        assert_eq!(engine.cells, old_cells);
+        assert_eq!(engine.history, old_history);
+        assert!(!engine.history.is_empty());
+        assert!(engine.puzzle.is_some());
+        assert_eq!(engine.status_key, "generation_failed");
+    }
+
+    #[test]
     fn generates_and_starts_blank_apart_from_clues() {
         let engine = engine_with_puzzle(8, 7);
         let puzzle = engine.puzzle.as_ref().expect("puzzle");
@@ -976,7 +998,11 @@ mod tests {
 
         let with_fields = engine.state_json("", true);
         assert!(with_fields.contains("\"fields\":["), "{with_fields}");
-        assert!(with_fields.contains("\"key\":\"max_attempts\""), "{with_fields}");
+        assert!(with_fields.contains("\"key\":\"density\""), "{with_fields}");
+        assert!(
+            !with_fields.contains("\"key\":\"node_budget\""),
+            "{with_fields}"
+        );
         assert!(with_fields.contains("\"help\":\""), "{with_fields}");
     }
 

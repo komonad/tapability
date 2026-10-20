@@ -13,6 +13,7 @@ const imports = {
     // tapa-core::clock calls this for monotonic milliseconds; there is no
     // clock inside wasm32-unknown-unknown.
     tapa_now_ms: () => performance.now(),
+    tapa_generation_progress: (attempts, qualified) => self.postMessage({ progress: { attempts, qualified } }),
   },
 };
 

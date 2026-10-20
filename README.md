@@ -123,24 +123,20 @@ fit). **Defaults** refills the fields.
 
 Sliders update their numeric fields while dragging. **Apply & new puzzle**
 commits the generation settings. The browser includes sliders for size,
-difficulty effort, density bounds, clueless fraction and search budgets; the
-desktop panel includes size, difficulty effort, clueless fraction, budget slack
-and attempts. The browser black-cell target uses two handles on one track,
+difficulty effort, black-cell coverage and clueless fraction; the desktop panel
+shows the same generation settings. The browser black-cell target uses two handles on one track,
 with a percentage readout. Other numeric fields remain editable. The separate
 cell-size slider zooms the board immediately without generating a puzzle.
 
 | setting | default | meaning |
 |---|---|---|
 | `size` | 20 | board is `size x size` (3..60) |
-| `difficulty` | 3 | compare 1..5 distinct puzzles; prefer bounded one-cell contradiction solvability, then logical work |
+| `difficulty` | 3 | compare up to 1..5 qualifying logical paths; stop early near the target workload |
 | `seed` | clock | fixed seed; makes generation reproducible |
 | `density` | `0.50-0.60` | approximate target share of black answer cells, chosen randomly within the range; independent of clue density |
 | `max_clueless_fraction` | 0.15 | reject shapes whose biggest clue-free patch exceeds this fraction of the board |
-| `node_budget` | 150000 | nodes for one whole generation, shared adaptively |
-| `time_budget_ms` | 2000 | milliseconds for one whole generation |
-| `check_min_nodes` | 3000 | floor for a single uniqueness proof |
-| `check_slack` | 3 | how much one proof may borrow over its fair share |
-| `max_attempts` | 200 | how many shapes to try before giving up |
+| `limited_generation` | false | optional CLI/config global limits; hidden from the ordinary control panel |
+| `node_budget`, `time_budget_ms`, `max_attempts` | advanced | effective only when `limited_generation = true` |
 
 The same settings can be set from a file or the command line:
 
@@ -156,16 +152,24 @@ Settings changed in the game are remembered in
 `%APPDATA%\tapa\settings.conf` (falling back to `tapa-settings.conf` next to the
 working directory when that is not writable).
 
-### How the budget behaves
+### Optional compute limits
 
-The budget is a **shared pool, not a hard per-proof cap**: each uniqueness proof
+Global limits are **disabled by default**. Generation continues until a
+qualifying logical path is found, and the browser shows candidate progress and
+a Cancel generation button. A generation worker is separate from the current
+game worker; cancelling discards only the candidate search.
+
+For explicitly constrained CLI jobs, `--set limited_generation=true` enables
+`node_budget`, `time_budget_ms` and `max_attempts`. With that opt-in, the budget
+is a shared pool: each uniqueness proof
 gets `remaining / proofs left * check_slack` nodes, so one that needs a little
 more than its fair share can still finish. A proof that does run out keeps its
 clue and is retried once at the end with whatever budget is left. Running out of
 budget never breaks uniqueness - it only leaves a redundant clue in place.
 
-Measured on this machine: 12x12 generates in ~15 ms, 20x20 in ~1.0 s average,
-30x30 in 5-10 s (it needs a larger `node_budget` to stay minimal).
+Completion time varies with the requested shape and the number of candidates
+needed to satisfy the workload targets. The browser remains responsive while
+its separate generation worker searches.
 
 ## Web front end (WebAssembly)
 
@@ -335,22 +339,41 @@ solution *found and proven* (not "aborted by budget") means unique.
    clue, except cells whose clue would be 8. If this set does not already have a
    unique solution, the shape is unusable (subsets are only weaker) and a new
    shape is grown.
-3. **minimise each candidate's clues**: walk the candidates in random order and
-   drop a clue whenever the puzzle still has exactly one solution. Every kept
-   clue was tested against a superset of the final set, so a completed pass is
-   *inclusion-minimal*. Budget exhaustion can leave redundant clues.
-4. **compare distinct puzzle candidates**: generate up to `difficulty` different
-   answer shapes within the shared budget. Assess basic deduction progress,
-   then test one unknown cell at a time for contradictions using propagation
-   without recursive search. Prefer candidates this bounded analysis completes;
-   then compare the contradiction work (capped at 12 steps), basic-rule
-   bottlenecks and clue count. The full solver separately proves uniqueness.
-   Assessment timeouts never count as completed logical solutions.
+3. **minimise each candidate's clues**: drop a clue only after a successful
+   uniqueness proof. Each removal proof is capped at the greater of 30,000
+   nodes and `check_min_nodes`, within its share of the common pool. An aborted
+   proof retains the clue.
+4. **repair logical stalls**: assess basic rules and single-cell contradiction
+   propagation without recursive search. A stalled candidate can regain up to
+   one valid given per 50 board cells to unlock deductions. Givens are selected
+   for context-specific progress, with a penalty for revealing many opening moves. Restoration trials retain the basic-rule
+   workload floor before committing a given. Adding a valid
+   given to a proven unique puzzle preserves its unique solution. The resulting
+   set need not be inclusion-minimal.
+5. **screen the logical path**: every delivered puzzle must have a consistent,
+   completed assessment within 12 probes per board cell. For boards of at least
+   225 cells, acceptance also requires:
+   - 50–80% of non-clue cells remain undecided after basic rules;
+   - at least one successful contradiction step per 25 board cells;
+   - immediate clue deductions cover at least 3% of non-clue cells;
+   - clue cells occupy 12–23% of the board.
+6. **rank qualifying candidates**: prefer a basic-rule bottleneck near 60% and
+   successful contradiction work near 7.7% of board area, then fewer clues.
+   Compare up to `difficulty` qualifying candidates, with early completion near
+   both targets. Continue sampling distinct shapes when a candidate fails.
 
-The logical assessment describes a limited rule set, not the ability of the
-full search solver and not a calibrated human difficulty grade. If every
-candidate exceeds the assessment budget, generation returns the best verified
-unique candidate available.
+A completed logical path is checked against the stored unique solution.
+Generation continues until a qualifying candidate is available; it never
+substitutes an unscreened puzzle. Explicitly enabled global limits can return
+a qualifying result found so far or a failure. The browser retains the current
+puzzle and marks when a new generation fails and displays verified path statistics on
+the left after success. Small boards keep the complete-path gate without the
+large-board workload floors.
+
+These workload targets describe a limited rule set. They do not measure the
+ability of the full search solver or constitute a calibrated human difficulty
+grade. Fixed seeds are reproducible without wall-clock cutoffs. If optional limits
+include a wall-clock cutoff, it can change which qualifying candidate is available.
 
 A native assessment example accepts tab-separated puzzle files with four fields:
 width, height, label and `cell=digits;cell=digits` clues. A digit `0` denotes no
@@ -361,8 +384,10 @@ search nodes, uniqueness and generation time using the same rules for each board
 cargo run --release -p tapa-core --example assess -- puzzles.tsv 12
 ```
 
-The final argument chooses how many fixed seeds to generate at each comparison
-size (20x20 and 25x25). Use `-` as the input path to assess generated puzzles only.
+The count chooses how many fixed seeds to generate at each comparison size
+(20x20 and 25x25). An optional following comma-separated size list overrides
+those sizes, e.g. `-- - 12 25`. Use `-` as the input path to assess generated
+puzzles only. The output includes the acceptance result for every assessed board.
 
 ### Why not "start blank and add clues until the solution is unique"?
 
@@ -380,44 +405,26 @@ Every puzzle is *verified* unique, the stored solution is the one the shape
 started from, and clues of 8 never appear (a 0 cannot occur either: a clue is
 only placed where black already touches).
 
-## Measured performance
+## Measuring generation
 
-Windows, `--release`, 20x20, 20 seeds:
-
-| metric | result |
-|---|---|
-| generation time | 40-780 ms, ~135 ms average, 0 failures |
-| clues per puzzle | 68-79 (inclusion-minimal) |
-| black cells | 201-236 of 400 (50-59%) |
-| biggest clue-free patch | up to 24 cells (6% of the board) |
-| edges reached | 4 of 4 on every puzzle (40 seeds) |
-| shapes tried per puzzle | 1 |
-| test suite | 54 tests, ~0.2 s release |
-
-The same engine in WebAssembly (`web/tapa.wasm`, 144 KiB, Chrome 152) generates
-a 20x20 in the same ballpark; the page itself stays interactive throughout,
-because all of it runs on a worker thread.
-
-The clue count is high because the numbers have to cover the whole board *and*
-the set has to stay minimal. Dense boards are also what make the solver fast:
-the harder a puzzle is constrained, the quicker a uniqueness proof finishes. At
-the 0.40-0.50 density this generator used to ship, a 20x20 averaged a second and
-occasionally took three; at 0.50-0.60 the same board averages 135 ms, so the
-denser default is both prettier and faster.
+Generation time includes shape sampling, uniqueness proofs, logical-path repair
+and comparison of qualifying candidates. Measure a fixed seed set with the
+assessment example above to report completion times alongside logical-path
+statistics. The WebAssembly engine runs in a worker so the page remains
+interactive during generation.
 
 ## Limitations
 
 * The generator is tuned for 20x20; other sizes work but were only spot-checked.
-* "Minimal" here means *inclusion*-minimal (no single clue is removable), which
-  greedy removal guarantees; it is not proven to be the smallest possible clue
-  set for that solution. When the budget runs out, a removable clue can also
-  survive. The unit tests check strict minimality with the budgets disabled.
-* Difficulty effort favors candidates completed by bounded one-cell contradiction
-  analysis. It is a heuristic, not a human difficulty grade or a guarantee that
-  every generated puzzle fits that rule set. Higher effort compares more
-  candidates within the same generation budget.
-* The solver has no clause learning or restarts; hard instances are bounded by
-  the shared budget rather than solved quickly.
+* Initial removal seeks an inclusion-minimal unique clue set. Bounded proofs
+  can retain a redundant clue, and logical-path repair can restore givens to
+  make the reasoning complete. Final quality takes precedence over clue minimality.
+* Logical-path screening uses a bounded, size-normalized rule set. Some settings
+  can take longer to produce a qualifying puzzle. With optional global limits
+  enabled, generation can report failure. Human difficulty and visual composition
+  still need playtesting.
+* The solver has no clause learning or restarts; individual removal proofs use
+  work slices so one candidate cannot monopolize the search. This does not impose a default deadline on puzzle generation.
 * The desktop build is Windows only (Win32 + GDI). The engine and the browser
   front end are not: they only need `wasm32-unknown-unknown`.
 * The browser build needs a static server; `file://` cannot fetch WebAssembly.

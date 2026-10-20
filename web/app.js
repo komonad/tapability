@@ -146,34 +146,58 @@ const ui = {
 
 /* ---- worker plumbing --------------------------------------------------- */
 
-const worker = new Worker(
-  // carry the published asset version into the worker so it can version the
-  // wasm request too (GitHub Pages caches for ten minutes)
-  "worker.js" + (window.TAPA_VERSION ? `?v=${window.TAPA_VERSION}` : ""),
-);
 let veilTimer = 0;
 let nextId = 1;
 const waiting = new Map();
+const requestOwners = new Map();
+let generationTask = null;
 
-worker.addEventListener("message", (event) => {
-  const { id, state, error } = event.data;
-  const resolve = waiting.get(id);
-  if (!resolve) return;
-  waiting.delete(id);
-  resolve(error ? { fatal: true, error } : state);
-});
-
-worker.addEventListener("error", (event) => {
-  setStatus(`the engine worker failed: ${event.message}`, "bad");
-});
-
-/** Send one command; resolves with the reply state. */
-function send(cmd) {
-  const id = nextId++;
-  return new Promise((resolve) => {
-    waiting.set(id, resolve);
-    worker.postMessage({ id, cmd });
+function createEngineWorker() {
+  const target = new Worker("worker.js" + (window.TAPA_VERSION ? `?v=${window.TAPA_VERSION}` : ""));
+  target.addEventListener("message", event => {
+    if (event.data.progress) {
+      if (generationTask && generationTask.worker === target) {
+        setStatus(fill(t("status.searching"), [event.data.progress.attempts, event.data.progress.qualified]), "");
+      }
+      return;
+    }
+    const { id, state, error } = event.data;
+    const resolve = waiting.get(id);
+    if (!resolve) return;
+    waiting.delete(id);
+    requestOwners.delete(id);
+    resolve(error ? { fatal: true, error } : state);
   });
+  target.addEventListener("error", event => {
+    for (const [id, owner] of requestOwners) {
+      if (owner !== target) continue;
+      waiting.get(id)({ fatal: true, error: event.message });
+      waiting.delete(id); requestOwners.delete(id);
+    }
+  });
+  return target;
+}
+
+let worker = createEngineWorker();
+
+function sendTo(target, cmd) {
+  const id = nextId++;
+  return new Promise(resolve => {
+    waiting.set(id, resolve);
+    requestOwners.set(id, target);
+    target.postMessage({ id, cmd });
+  });
+}
+
+function send(cmd) { return sendTo(worker, cmd); }
+
+function stopWorker(target) {
+  target.terminate();
+  for (const [id, owner] of requestOwners) {
+    if (owner !== target) continue;
+    waiting.get(id)({ cancelled: true });
+    waiting.delete(id); requestOwners.delete(id);
+  }
 }
 
 /** Send one command and forget about it (used while dragging). */
@@ -231,6 +255,9 @@ function updateChrome(state) {
     els.info.textContent = "";
   }
   const stats = state.genStats;
+  const quality = document.getElementById("quality");
+  if (quality) quality.textContent = stats && stats.qualityVerified
+    ? fill(t("quality.verified"), [stats.basicRemaining, stats.logicalSteps]) : "";
   els.stats.textContent = stats
     ? fill(t("stats"), [stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes])
     : "";
@@ -863,8 +890,6 @@ function press(action) {
 const SETTING_SLIDERS = {
   size: [3, 60, 1], difficulty: [1, 5, 1],
   max_clueless_fraction: [0, 1, 0.01],
-  node_budget: [1000, 1000000, 1000], time_budget_ms: [0, 30000, 100],
-  check_min_nodes: [100, 30000, 100], check_slack: [1, 10, 1], max_attempts: [1, 1000, 1],
 };
 
 function syncSettingSliders() {
@@ -1172,15 +1197,49 @@ function newSeed() {
 }
 
 async function generate(seed) {
+  if (generationTask) return;
+  const task = { worker: createEngineWorker(), cancelled: false };
+  generationTask = task;
+  const cancel = document.getElementById("btn-cancel-generation");
+  cancel.hidden = false;
   setBusy(true, { veil: true });
   setStatus(t("status.generating"), "");
-  const state = await send(`generate ${seed}`);
-  setBusy(false);
-  if (state.fatal) {
-    setStatus(state.error, "bad");
-    return;
+  let state = await send("");
+  if (task.cancelled) return;
+  for (const line of (state.settingsText || "").split("\n")) {
+    const clean = line.split("#")[0].trim();
+    const cut = clean.indexOf("=");
+    if (cut < 0) continue;
+    state = await sendTo(task.worker, `set ${clean.slice(0,cut).trim()} ${clean.slice(cut+1).trim()}`);
+    if (task.cancelled) return;
+    if (state.fatal || state.settingsError) break;
   }
-  applyState(state);
+  if (!state.fatal && !state.settingsError) state = await sendTo(task.worker, `generate ${seed}`);
+  if (task.cancelled) return;
+  generationTask = null;
+  cancel.hidden = true;
+  if (!state.fatal && !state.settingsError && state.statusKey !== "generation_failed") {
+    const previous = worker;
+    worker = task.worker;
+    stopWorker(previous);
+    setBusy(false);
+    applyState(state);
+  } else {
+    stopWorker(task.worker);
+    setBusy(false);
+    setStatus(state.error || state.settingsError || fill(t("status.generation_failed"), [seed]), "bad");
+  }
+}
+
+function cancelGeneration() {
+  const task = generationTask;
+  if (!task) return;
+  task.cancelled = true;
+  generationTask = null;
+  stopWorker(task.worker);
+  document.getElementById("btn-cancel-generation").hidden = true;
+  setBusy(false);
+  setStatus(t("status.generation_cancelled"), "");
 }
 
 function newPuzzle() {
@@ -1327,6 +1386,7 @@ function ensureTranslated() {
 
 /* ---- wiring ------------------------------------------------------------ */
 
+document.getElementById("btn-cancel-generation").addEventListener("click", cancelGeneration);
 els["btn-new"].addEventListener("click", newPuzzle);
 els["btn-clear"].addEventListener("click", () => run("reset"));
 els["btn-check"].addEventListener("click", () => run("check"));

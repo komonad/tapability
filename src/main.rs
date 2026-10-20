@@ -37,9 +37,9 @@ fn usage() {
          \x20 --density LO-HI          fraction of black cells, e.g. 0.40-0.50\n\
          \n\
          settings (all optional):\n\
-         \x20 size, difficulty, seed, density, max_clueless_fraction,\n\
-         \x20 per_check_ms, per_check_nodes, total_nodes,\n\
-         \x20 shape_check_ms, shape_check_nodes, max_attempts\n\
+         \x20 size, difficulty, seed, density, max_clueless_fraction, limited_generation,\n\
+         \x20 node_budget, time_budget_ms, check_min_nodes,\n\
+         \x20 check_slack, max_attempts\n\
          \n\
          controls:\n\
          \x20 left click   mark wall (click the wall again to clear)\n\

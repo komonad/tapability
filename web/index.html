@@ -32,6 +32,7 @@
         <p class="hint" data-i18n="batch.help">
           批量工具可打印谜题或测试生成速度，运行期间页面仍可响应操作。
         </p>
+        <p id="quality" class="hint"></p>
         <p id="help" class="help"></p>
       </aside>
       <main class="board-area">
@@ -60,6 +61,9 @@
         <div class="buttons">
           <button id="btn-new" type="button">
             <span data-i18n="btn.new">新题目</span><kbd>N</kbd>
+          </button>
+          <button id="btn-cancel-generation" type="button" hidden>
+            <span data-i18n="btn.cancelGeneration">取消生成</span>
           </button>
           <button id="btn-clear" type="button">
             <span data-i18n="btn.clear">清空</span><kbd>R</kbd>
