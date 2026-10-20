@@ -1079,6 +1079,26 @@ mod tests {
     }
 
     #[test]
+    fn an_unreachable_pocket_is_one_selected_undoable_round() {
+        let mut engine = Engine::new();
+        engine.puzzle = Some(Puzzle::new(
+            tapa_core::model::Grid::new(3, 3), vec![],
+            vec![BLACK, BLACK, WHITE, BLACK, WHITE, WHITE, WHITE, WHITE, WHITE], 0,
+        ));
+        engine.cells = vec![BLACK, BLACK, WHITE, BLACK, UNKNOWN, UNKNOWN, WHITE, UNKNOWN, UNKNOWN];
+        engine.wrong = vec![false; 9];
+        engine.command("onestep").unwrap();
+        let before_pocket = engine.cells.clone();
+        assert_eq!(engine.deduction_selection, vec![4]);
+        engine.command("onestep").unwrap();
+        assert_eq!(engine.deduction_selection, vec![5, 7, 8]);
+        assert_eq!(engine.cells, engine.puzzle.as_ref().unwrap().solution);
+        engine.command("undo").unwrap();
+        assert_eq!(engine.cells, before_pocket);
+        assert_eq!(engine.deduction_selection, vec![4]);
+    }
+
+    #[test]
     fn local_case_deductions_are_selected_and_undone_as_one_round() {
         let mut engine = Engine::new();
         let mut solution = vec![WHITE; 12];
@@ -1100,7 +1120,7 @@ mod tests {
         assert_eq!(engine.cells, before);
         engine.command("onestep").unwrap();
         assert!(engine.hint.is_none());
-        assert_eq!(engine.deduction_selection, vec![6, 9]);
+        assert_eq!(engine.deduction_selection, vec![3, 6, 9, 11]);
         assert_eq!(engine.cells[6], WHITE);
         assert_eq!(engine.cells[9], WHITE);
         engine.command("undo").unwrap();

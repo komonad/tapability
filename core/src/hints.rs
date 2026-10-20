@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(hint.steps.len(), 1);
         assert_eq!(hint.steps[0].rule, Rule::ClueCases);
         assert_eq!(hint.focus[0], 0);
-        assert_eq!(hint.marks, vec![(6, WHITE), (9, WHITE)]);
+        assert_eq!(hint.marks, vec![(3, WHITE), (6, WHITE), (9, WHITE), (11, WHITE)]);
         assert!(hint.metrics(&grid).is_none());
     }
 

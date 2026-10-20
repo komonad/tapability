@@ -420,6 +420,9 @@ pub(crate) fn basic_step_deductions(
             }
         }
     }
+    for cell in unreachable_cells(grid, &snapshot) {
+        propose(cell, WHITE);
+    }
     for cell in connection_bridges(grid, &snapshot) {
         propose(cell, BLACK);
     }
@@ -479,6 +482,31 @@ pub fn deduction_closure(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -> 
             marks[i] == UNKNOWN && v != UNKNOWN && !clues.iter().any(|(c, _)| *c == i)
         })
         .map(|(i, &v)| (i, v))
+        .collect()
+}
+
+/// Unknown cells outside the potential component containing all existing black
+/// cells cannot join the wall. An impossible connection produces no deductions.
+fn unreachable_cells(grid: &Grid, state: &[u8]) -> Vec<usize> {
+    let Some(root) = state.iter().position(|&value| value == BLACK) else {
+        return Vec::new();
+    };
+    let mut reachable = vec![false; grid.len()];
+    let mut stack = vec![root];
+    reachable[root] = true;
+    while let Some(cell) = stack.pop() {
+        for &neighbor in grid.ortho(cell).iter().flatten() {
+            if !reachable[neighbor] && state[neighbor] != WHITE {
+                reachable[neighbor] = true;
+                stack.push(neighbor);
+            }
+        }
+    }
+    if state.iter().enumerate().any(|(i, &value)| value == BLACK && !reachable[i]) {
+        return Vec::new();
+    }
+    state.iter().enumerate()
+        .filter_map(|(i, &value)| (value == UNKNOWN && !reachable[i]).then_some(i))
         .collect()
 }
 
@@ -1222,6 +1250,44 @@ mod tests {
         let found = one_step_deductions(&grid, &marks, &[]);
         assert_eq!(found, vec![(3, WHITE), (5, WHITE)]);
         assert!(one_step_deductions(&grid, &[BLACK; 6], &[]).is_empty());
+    }
+
+    #[test]
+    fn one_round_marks_every_pocket_without_a_path_to_existing_black() {
+        let grid = Grid::new(5, 3);
+        let marks = vec![
+            BLACK, WHITE, UNKNOWN, WHITE, UNKNOWN,
+            UNKNOWN, WHITE, UNKNOWN, WHITE, UNKNOWN,
+            UNKNOWN, WHITE, UNKNOWN, WHITE, UNKNOWN,
+        ];
+        assert_eq!(one_step_deductions(&grid, &marks, &[]),
+            vec![(2, WHITE), (4, WHITE), (7, WHITE), (9, WHITE), (12, WHITE), (14, WHITE)]);
+        assert_eq!(marks[2], UNKNOWN);
+        assert_eq!(marks[5], UNKNOWN);
+        assert_eq!(marks[10], UNKNOWN);
+    }
+
+    #[test]
+    fn pocket_deductions_require_an_existing_consistent_black_region() {
+        let grid = Grid::new(5, 1);
+        for marks in [
+            [UNKNOWN, WHITE, UNKNOWN, WHITE, UNKNOWN],
+            [BLACK, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN],
+            [BLACK, WHITE, UNKNOWN, WHITE, BLACK],
+        ] {
+            assert!(one_step_deductions(&grid, &marks, &[]).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_new_white_barrier_only_closes_a_pocket_on_the_next_round() {
+        let grid = Grid::new(3, 3);
+        let marks = vec![BLACK, BLACK, WHITE, BLACK, UNKNOWN, UNKNOWN, WHITE, UNKNOWN, UNKNOWN];
+        assert_eq!(one_step_deductions(&grid, &marks, &[]), vec![(4, WHITE)]);
+        let mut next = marks.clone();
+        next[4] = WHITE;
+        assert_eq!(one_step_deductions(&grid, &next, &[]),
+            vec![(5, WHITE), (7, WHITE), (8, WHITE)]);
     }
 
     #[test]

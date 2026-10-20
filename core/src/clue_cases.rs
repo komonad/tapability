@@ -184,7 +184,7 @@ mod tests {
         assert!(basic_step_deductions(&grid, &marks, &clues).is_empty());
         let step = clue_case_step(&grid, &marks, &clues, None).unwrap();
         assert_eq!(step.focus[0], 0);
-        assert_eq!(step.marks, vec![(6, WHITE), (9, WHITE)]);
+        assert_eq!(step.marks, vec![(3, WHITE), (6, WHITE), (9, WHITE), (11, WHITE)]);
         assert!(step
             .marks
             .iter()
@@ -219,9 +219,9 @@ mod tests {
 
     #[test]
     fn a_branch_stops_before_a_second_deduction_round() {
-        let grid = Grid::new(5, 2);
+        let grid = Grid::new(5, 3);
         let clues = vec![(0, vec![1]), (2, vec![1]), (4, vec![1])];
-        let mut marks = vec![UNKNOWN; 10];
+        let mut marks = vec![UNKNOWN; 15];
         for (cell, _) in &clues {
             marks[*cell] = WHITE;
         }
@@ -232,8 +232,8 @@ mod tests {
                 .map(|(cell, clue)| (*cell, feasible_masks(&grid, *cell, clue)))
                 .collect(),
         };
-        let branch = context.branch(&marks, &clues, 0, 1 << 5).unwrap();
-        assert_eq!(branch[1], BLACK);
+        let branch = context.branch(&marks, &clues, 0, 1 << 4).unwrap();
+        assert_eq!(branch[6], BLACK);
         assert_eq!(branch[3], WHITE);
         assert_eq!(branch[8], WHITE);
         assert_eq!(branch[9], UNKNOWN);

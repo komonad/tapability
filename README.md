@@ -113,6 +113,10 @@ manual edits clear the selection. Single-clue steps use the same grouped undo
 behavior. Internal difficulty assessment uses a separate basic-rule closure that
 repeats until stable.
 
+A snapshot round also marks unknown regions white when white barriers prevent
+them from reaching the existing black wall. With no black cells, this rule makes
+no deductions. A barrier inferred in this round takes effect on the next click.
+
 When basic rules stall, D enumerates the feasible distributions around one clue.
 Each distribution is placed on a copy of the current board and receives one
 parallel round of basic rules. Immediate violations of any clue, the 2x2 rule
