@@ -41,7 +41,7 @@
           触屏：轻点格子循环 墙 → 空 → 清除 · 拖动一笔画 · 轻点线索推该线索
         </p>
         <p class="hint" data-i18n="hint.step">
-          单步按当前盘面推一轮，可同时确定多格；新结论留到下一轮使用。
+          单步按当前盘面推一轮，本轮改动会高亮；按 Z 撤销整轮。新结论留到下一轮使用。
         </p>
         <p class="hint" data-i18n="batch.help">
           批量工具可打印谜题或测试生成速度，运行期间页面仍可响应操作。
@@ -61,7 +61,7 @@
         </header>
 
         <div id="stage" class="stage">
-          <canvas id="board" width="10" height="10"></canvas>
+          <canvas id="board" width="10" height="10" tabindex="0"></canvas>
         </div>
 
         <footer class="footer">

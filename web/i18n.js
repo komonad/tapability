@@ -20,7 +20,7 @@ window.TAPA_I18N = {
       "Shift + 悬停：高亮整块墙 · 中键或 Alt+左键点线索：只推这一个线索 · Z：撤销（长按连撤）",
     "hint.touch": "触屏：轻点格子循环 墙 → 空 → 清除 · 拖动一笔画 · 轻点线索推该线索",
     "guide.rules": "规则与操作",
-    "hint.step": "单步按当前盘面推一轮，可同时确定多格；新结论留到下一轮使用。",
+    "hint.step": "单步按当前盘面推一轮，本轮改动会高亮；按 Z 撤销整轮。新结论留到下一轮使用。",
     "field.difficulty.label": "难度筛选力度",
     "field.difficulty.help": "提高力度会更充分地精简线索。唯一解由约束求解器验证；推理进度单独评估。",
     "panel.controls": "操作",
@@ -139,7 +139,7 @@ window.TAPA_I18N = {
     "hint.touch":
       "Touch: tap a cell to cycle wall → empty → clear · drag to paint a stroke · tap a clue to step it",
     "guide.rules": "Rules & controls",
-    "hint.step": "One step reads the current board and may confirm several cells. New marks become premises on the next click.",
+    "hint.step": "One step reads the current board. Changed cells are highlighted; Z undoes the whole round. New marks become premises on the next click.",
     "field.difficulty.label": "Difficulty effort",
     "field.difficulty.help": "Higher effort simplifies clues more thoroughly. A constraint solver verifies uniqueness; reasoning progress is assessed separately.",
     "panel.controls": "Controls",

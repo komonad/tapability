@@ -25,7 +25,7 @@
 //! ```
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use tapa_core::history::History;
 
 use tapa_core::clock::{now_ms, Timer};
 use tapa_core::hints::{self, Hint, Outcome as HintOutcome};
@@ -38,8 +38,6 @@ use tapa_core::model::{
 use tapa_core::report;
 use tapa_core::rng::Rng;
 
-/// How many marks can be undone; the same limit as the native game.
-const MAX_HISTORY: usize = 4096;
 /// Size of the buffer JavaScript writes commands into.
 const SCRATCH_CAP: usize = 1 << 16;
 
@@ -81,7 +79,8 @@ struct Engine {
     /// Clue cells whose numbers the player has already accounted for, so the
     /// page can grey those digits out.
     satisfied_clues: Vec<bool>,
-    history: VecDeque<(usize, u8)>,
+    history: History,
+    deduction_selection: Vec<usize>,
     /// Cell that was changed last, used to break ties in the error analysis.
     last_changed: Option<usize>,
     /// Wall whose group is spotlighted (the last wall that was painted).
@@ -118,7 +117,8 @@ impl Engine {
                 clues: Vec::new(),
             },
             satisfied_clues: Vec::new(),
-            history: VecDeque::new(),
+            history: History::default(),
+            deduction_selection: Vec::new(),
             last_changed: None,
             anchor: None,
             drag: None,
@@ -187,6 +187,7 @@ impl Engine {
                 self.solved = false;
                 self.show_solution = false;
                 self.history.clear();
+                self.deduction_selection.clear();
                 self.last_changed = None;
                 self.anchor = None;
                 self.drag = None;
@@ -298,28 +299,27 @@ impl Engine {
         if self.cells[cell] == value {
             return;
         }
-        self.history.push_back((cell, self.cells[cell]));
-        while self.history.len() > MAX_HISTORY {
-            self.history.pop_front();
-        }
-        self.cells[cell] = value;
+        self.history.apply(
+            &mut self.cells,
+            &mut self.deduction_selection,
+            [(cell, value)],
+            false,
+        );
         self.after_change(Some(cell));
     }
 
-    /// Apply a list of deduced marks as ordinary, undoable moves.
+    /// Apply one deduction group as one undoable action and select its changes.
     fn apply_marks(&mut self, marks: Vec<(usize, u8)>) -> usize {
-        let mut applied = 0usize;
-        for (cell, value) in marks {
-            if self.cells[cell] != UNKNOWN {
-                continue;
-            }
-            self.history.push_back((cell, self.cells[cell]));
-            while self.history.len() > MAX_HISTORY {
-                self.history.pop_front();
-            }
-            self.cells[cell] = value;
-            applied += 1;
-        }
+        let changes: Vec<_> = marks
+            .into_iter()
+            .filter(|&(cell, _)| self.cells[cell] == UNKNOWN)
+            .collect();
+        let applied = self.history.apply(
+            &mut self.cells,
+            &mut self.deduction_selection,
+            changes,
+            true,
+        );
         if applied > 0 {
             self.anchor = None;
             self.after_change(None);
@@ -521,7 +521,10 @@ impl Engine {
         if self.show_solution {
             return;
         }
-        let Some((cell, previous)) = self.history.pop_back() else {
+        let Some(cell) = self
+            .history
+            .undo(&mut self.cells, &mut self.deduction_selection)
+        else {
             self.set_status(
                 Kind::Info,
                 "nothing_to_undo",
@@ -530,7 +533,6 @@ impl Engine {
             );
             return;
         };
-        self.cells[cell] = previous;
         self.anchor = None;
         self.after_change(Some(cell));
     }
@@ -540,15 +542,13 @@ impl Engine {
             return;
         };
         let fresh = Engine::fresh_marks(puzzle);
-        for i in 0..self.cells.len() {
-            if self.cells[i] != fresh[i] {
-                self.history.push_back((i, self.cells[i]));
-                while self.history.len() > MAX_HISTORY {
-                    self.history.pop_front();
-                }
-            }
-        }
-        self.cells = fresh;
+        self.history.apply(
+            &mut self.cells,
+            &mut self.deduction_selection,
+            fresh.into_iter().enumerate(),
+            false,
+        );
+        self.deduction_selection.clear();
         self.anchor = None;
         self.after_change(None);
     }
@@ -801,6 +801,8 @@ impl Engine {
                 stats.clues, stats.w, stats.h, stats.ms, stats.attempts, stats.nodes, stats.basic_remaining, stats.logical_steps, stats.logical_remaining, stats.logical_solved, stats.logical_exhausted, stats.logical_consistent
             )),
         }
+        out.push_str(",\"deductionCells\":");
+        push_indices(&mut out,&self.deduction_selection);
         out.push_str(",\"hint\":");
         match &self.hint {
             Some(hint) => push_hint(&mut out, hint, self.puzzle.as_ref().unwrap()),
@@ -1147,6 +1149,54 @@ mod tests {
     }
 
     #[test]
+    fn one_undo_restores_a_whole_deduction_round_and_its_selection() {
+        let mut engine = Engine::new();
+        engine.puzzle = Some(Puzzle::new(
+            tapa_core::model::Grid::new(4, 2),
+            vec![(0, vec![3]), (2, vec![2])],
+            vec![WHITE, BLACK, WHITE, WHITE, BLACK, BLACK, WHITE, WHITE],
+            0,
+        ));
+        engine.cells = Engine::fresh_marks(engine.puzzle.as_ref().unwrap());
+        engine.wrong = vec![false; 8];
+        let before = engine.cells.clone();
+        engine.one_step();
+        let first = engine.cells.clone();
+        assert_eq!(engine.deduction_selection, vec![1, 4, 5]);
+        assert!(engine
+            .state_json("", false)
+            .contains("\"deductionCells\":[1,4,5]"));
+        engine.one_step();
+        assert_eq!(engine.deduction_selection, vec![3, 6, 7]);
+        engine.undo();
+        assert_eq!(engine.cells, first);
+        assert_eq!(engine.deduction_selection, vec![1, 4, 5]);
+        engine.undo();
+        assert_eq!(engine.cells, before);
+        assert!(engine.deduction_selection.is_empty());
+        assert!(engine.history.is_empty());
+        engine.clue_step_at(0, 0);
+        assert_eq!(engine.deduction_selection, vec![1, 4, 5]);
+        engine.undo();
+        assert_eq!(engine.cells, before);
+        engine.one_step();
+        let first = engine.cells.clone();
+        engine.set_cell(3, WHITE);
+        assert!(engine.deduction_selection.is_empty());
+        engine.undo();
+        assert_eq!(engine.cells, first);
+        assert_eq!(engine.deduction_selection, vec![1, 4, 5]);
+        engine.one_step();
+        engine.one_step();
+        engine.undo();
+        assert_eq!(engine.cells, first);
+        engine.reset();
+        engine.undo();
+        assert_eq!(engine.cells, first);
+        assert_eq!(engine.deduction_selection, vec![1, 4, 5]);
+    }
+
+    #[test]
     fn check_marks_wrong_cells_only() {
         let mut engine = engine_with_puzzle(8, 5);
         let puzzle = engine.puzzle.as_ref().unwrap();
@@ -1276,9 +1326,7 @@ mod tests {
         for &(i, v) in &marks {
             assert_eq!(engine.cells[i], v);
         }
-        for _ in &marks {
-            engine.undo();
-        }
+        engine.undo();
         assert_eq!(engine.cells, before);
         engine.command("hint").unwrap();
         engine.command("hintdismiss").unwrap();

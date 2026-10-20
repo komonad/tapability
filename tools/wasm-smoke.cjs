@@ -140,7 +140,8 @@ check(
 );
 
 const undo = call("undo");
-check("undo takes one back", decided(undo) === filled - 1, `${decided(undo)} vs ${filled - 1}`);
+check("one undo restores the whole deduction round", undo.cells === puzzle.cells && undo.deductionCells.length === 0);
+check("deduction selection contains exactly the changed cells", step.deductionCells.length === filled && step.deductionCells.every(i => step.cells[i] !== puzzle.cells[i]));
 
 const cleared = call("reset");
 check(

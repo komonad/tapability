@@ -82,6 +82,7 @@ pub struct Gfx {
     brush_clue: HBRUSH,
     brush_solution_black: HBRUSH,
     brush_highlight: HBRUSH,
+    brush_selection: HBRUSH,
     brush_dot: HBRUSH,
 
     pen_grid: HPEN,
@@ -90,6 +91,7 @@ pub struct Gfx {
     pen_wrong: HPEN,
     pen_win: HPEN,
     pen_highlight: HPEN,
+    pen_selection: HPEN,
     pen_error: HPEN,
 
     font_title: HFONT,
@@ -191,6 +193,7 @@ impl Gfx {
             brush_clue: CreateSolidBrush(rgb(253, 248, 226)),
             brush_solution_black: CreateSolidBrush(rgb(150, 158, 178)),
             brush_highlight: CreateSolidBrush(rgb(64, 104, 176)),
+            brush_selection: CreateSolidBrush(rgb(223, 242, 244)),
             brush_dot: CreateSolidBrush(rgb(120, 128, 146)),
             pen_grid: CreatePen(PS_SOLID as i32, 1, rgb(168, 174, 188)),
             pen_border: CreatePen(PS_SOLID as i32, 2, rgb(70, 76, 96)),
@@ -198,6 +201,7 @@ impl Gfx {
             pen_wrong: CreatePen(PS_SOLID as i32, 2, rgb(214, 48, 48)),
             pen_win: CreatePen(PS_SOLID as i32, 3, rgb(46, 158, 66)),
             pen_highlight: CreatePen(PS_SOLID as i32, 2, rgb(255, 196, 72)),
+            pen_selection: CreatePen(PS_SOLID as i32, 2, rgb(22, 143, 153)),
             pen_error: CreatePen(PS_SOLID as i32, 2, rgb(226, 52, 52)),
             font_title: make_font(22, 700),
             font_ui: make_font(15, 400),
@@ -272,6 +276,7 @@ impl Gfx {
             self.brush_clue,
             self.brush_solution_black,
             self.brush_highlight,
+            self.brush_selection,
             self.brush_dot,
         ] {
             DeleteObject(b as HGDIOBJ);
@@ -283,6 +288,7 @@ impl Gfx {
             self.pen_wrong,
             self.pen_win,
             self.pen_highlight,
+            self.pen_selection,
             self.pen_error,
         ] {
             DeleteObject(p as HGDIOBJ);
@@ -383,6 +389,8 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
     if let Some(puzzle) = &app.puzzle {
         let n = puzzle.grid.len();
         if app.cells.len() == n {
+            let mut selected=vec![false;n];
+            if !app.show_solution { for &i in &app.deduction_selection { if i<n {selected[i]=true;} } }
             // nothing may bleed out of the board area, whatever the window size
             let saved = SaveDC(hdc);
             IntersectClipRect(hdc, 0, HEADER - 2, g.panel_x - 2, h);
@@ -401,6 +409,8 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
                         } else {
                             g.brush_empty
                         }
+                    } else if selected[idx] {
+                        if app.cells[idx]==BLACK {g.brush_highlight} else {g.brush_selection}
                     } else if app.highlight.get(idx).copied().unwrap_or(false) {
                         g.brush_highlight
                     } else {
@@ -525,6 +535,14 @@ unsafe fn draw(app: &App, hdc: HDC, w: i32, h: i32) {
                 if app.errors.cells.get(idx).copied().unwrap_or(false) {
                     outline_cell(hdc, g, puzzle, &app.errors.cells, g.pen_error, idx);
                 }
+            }
+
+            for &idx in &app.deduction_selection {
+                if app.show_solution {break;}
+                let (x,y)=puzzle.grid.xy(idx);
+                let px=g.grid_x+x as i32*g.cell;
+                let py=g.grid_y+y as i32*g.cell;
+                stroke(hdc,&rect(px+1,py+1,px+g.cell-1,py+g.cell-1),g.pen_selection);
             }
 
             // hover highlight

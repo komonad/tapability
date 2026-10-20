@@ -1,7 +1,7 @@
 //! Win32 window, application state and input handling.
 
-use std::collections::VecDeque;
 use std::mem;
+use tapa_core::history::History;
 use std::ptr;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -31,8 +31,6 @@ const WINDOW_STYLE: u32 = WS_OVERLAPPED
     | WS_THICKFRAME
     | WS_CLIPCHILDREN;
 
-/// How many marks can be undone. Holding Z walks back through them.
-const MAX_HISTORY: usize = 4096;
 
 // winapi 0.3.9 does not define virtual key codes for letter keys.
 const VK_ESCAPE_KEY: i32 = 0x1B;
@@ -87,7 +85,8 @@ pub struct App {
     /// Cells of the wall group that is currently spotlighted.
     pub highlight: Vec<bool>,
     /// Undo stack of (cell, previous value), most recent last.
-    history: VecDeque<(usize, u8)>,
+    history: History,
+    pub deduction_selection: Vec<usize>,
     /// Wall cell whose group is spotlighted, if any.
     highlight_anchor: Option<usize>,
     /// Whether the spotlight comes from Shift-hovering rather than a click.
@@ -124,7 +123,8 @@ impl App {
                 clues: Vec::new(),
             },
             highlight: Vec::new(),
-            history: VecDeque::new(),
+            history: History::default(),
+            deduction_selection: Vec::new(),
             highlight_anchor: None,
             highlight_from_hover: false,
             last_changed: None,
@@ -235,30 +235,28 @@ impl App {
         if self.cells[cell] == value {
             return;
         }
-        self.history.push_back((cell, self.cells[cell]));
-        while self.history.len() > MAX_HISTORY {
-            self.history.pop_front();
-        }
-        self.cells[cell] = value;
+        self.history.apply(
+            &mut self.cells,
+            &mut self.deduction_selection,
+            [(cell, value)],
+            false,
+        );
         self.after_change(Some(cell));
     }
 
-    /// Undo the most recent mark. Holding Z repeats this through key repeat.
-    /// Apply a list of deduced marks as ordinary, undoable moves.
+    /// Apply one deduction group as one undoable action and select its changes.
     /// Returns how many cells actually changed.
     fn apply_marks(&mut self, marks: Vec<(usize, u8)>) -> usize {
-        let mut applied = 0usize;
-        for (cell, value) in marks {
-            if self.cells[cell] != UNKNOWN {
-                continue;
-            }
-            self.history.push_back((cell, self.cells[cell]));
-            while self.history.len() > MAX_HISTORY {
-                self.history.pop_front();
-            }
-            self.cells[cell] = value;
-            applied += 1;
-        }
+        let changes: Vec<_> = marks
+            .into_iter()
+            .filter(|&(cell, _)| self.cells[cell] == UNKNOWN)
+            .collect();
+        let applied = self.history.apply(
+            &mut self.cells,
+            &mut self.deduction_selection,
+            changes,
+            true,
+        );
         if applied > 0 {
             self.highlight_anchor = None;
             self.highlight_from_hover = false;
@@ -394,12 +392,14 @@ impl App {
         if self.show_solution {
             return;
         }
-        let Some((cell, previous)) = self.history.pop_back() else {
+        let Some(cell) = self
+            .history
+            .undo(&mut self.cells, &mut self.deduction_selection)
+        else {
             self.status = "Nothing to undo.".to_string();
             self.status_kind = StatusKind::Info;
             return;
         };
-        self.cells[cell] = previous;
         self.highlight_from_hover = false;
         self.highlight_anchor = None;
         self.after_change(Some(cell));
@@ -467,15 +467,13 @@ impl App {
             return;
         };
         let fresh = App::fresh_marks(puzzle);
-        for i in 0..self.cells.len() {
-            if self.cells[i] != fresh[i] {
-                self.history.push_back((i, self.cells[i]));
-                while self.history.len() > MAX_HISTORY {
-                    self.history.pop_front();
-                }
-            }
-        }
-        self.cells = fresh;
+        self.history.apply(
+            &mut self.cells,
+            &mut self.deduction_selection,
+            fresh.into_iter().enumerate(),
+            false,
+        );
+        self.deduction_selection.clear();
         self.highlight_anchor = None;
         self.highlight_from_hover = false;
         self.after_change(None);
@@ -558,6 +556,7 @@ impl App {
         self.wrong.clear();
         self.highlight.clear();
         self.history.clear();
+        self.deduction_selection.clear();
         self.highlight_anchor = None;
         self.highlight_from_hover = false;
         self.last_changed = None;

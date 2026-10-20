@@ -665,15 +665,19 @@ async function main() {
     redOutline > 0,
     `${redOutline} red pixels`,
   );
+  const beforeClearGroup=await evaluate(`ui.state.cells`);
   await evaluate(`document.getElementById("btn-clear").click()`);
   await waitFor(`!ui.busy`, "the sealed wall is cleared again");
   await sleep(100);
 
-  // ---- undo takes the stroke back ----------------------------------------
+  // ---- undo restores the cleared board ----------------------------------
+  await evaluate(`els.canvas.focus()`);
+  check("the board can take keyboard focus",await evaluate(`document.activeElement===els.canvas`));
   await key("z");
   await sleep(80);
   const afterUndo = await evaluate(`ui.cells[${from + 3}]`);
-  check("Z undoes the last painted cell", afterUndo === 0, String(afterUndo));
+  const afterClearUndo=await evaluate(`ui.state.cells`);
+  check("Z undoes the complete reset",afterClearUndo===beforeClearGroup,JSON.stringify({diffs:[...afterClearUndo].flatMap((v,i)=>v!==beforeClearGroup[i]?[[i,beforeClearGroup[i],v]]:[])}));
 
   // ---- instant commands never veil the board ------------------------------
   // sample the veil flag on every repaint while undo runs
@@ -707,6 +711,8 @@ async function main() {
   await sleep(100);
   check("a slow operation covers the board", veiled === true, String(veiled));
   check("the cover goes away again", (await evaluate(`ui.veil`)) === false);
+
+  await evaluate(`run("reset")`);
 
   // ---- stepping a single clue: middle click, Alt + click, and the button ---
   const clueIndex = await evaluate(`[...ui.clues.keys()][0]`);
@@ -1233,6 +1239,31 @@ async function main() {
   await sleep(300);
 
 
+  await evaluate(`send('set size 20')`); await evaluate(`generate(42)`);
+  const roundStart=await evaluate(`ui.state.cells`);
+  await evaluate(`run('onestep')`);
+  const roundOne=await evaluate(`({cells:ui.state.cells,selection:ui.state.deductionCells})`);
+  check("one-step selection contains exactly this round's changes",JSON.stringify(roundOne.selection)===JSON.stringify([...roundOne.cells].flatMap((v,i)=>v!==roundStart[i]?[i]:[])));
+  await evaluate(`run('onestep')`);
+  const roundTwo=await evaluate(`({cells:ui.state.cells,selection:ui.state.deductionCells})`);
+  check("the next round replaces the deduction selection",JSON.stringify(roundTwo.selection)===JSON.stringify([...roundTwo.cells].flatMap((v,i)=>v!==roundOne.cells[i]?[i]:[])));
+  const selectionPixels=await evaluate(`(() => {
+    const ctx=els.canvas.getContext('2d'),counts={black:0,white:0,outlined:0};
+    for(const i of ui.state.deductionCells){
+      counts[ui.cells[i]===1?'black':'white']++;
+      const pixels=ctx.getImageData(Math.round(i%ui.cols*ui.cell*ui.dpr),Math.round(Math.floor(i/ui.cols)*ui.cell*ui.dpr),Math.floor(ui.cell*ui.dpr),Math.floor(ui.cell*ui.dpr)).data;
+      let found=false;
+      for(let k=0;k<pixels.length;k+=4)if(Math.abs(pixels[k]-22)<12 && Math.abs(pixels[k+1]-143)<12 && Math.abs(pixels[k+2]-153)<12){found=true;break;}
+      counts.outlined+=found?1:0;
+    }
+    return counts;
+  })()`);
+  check("both black and white deductions are visibly selected",selectionPixels.black>0 && selectionPixels.white>0 && selectionPixels.outlined===roundTwo.selection.length,JSON.stringify(selectionPixels));
+  await evaluate(`run('undo')`);
+  check("one undo restores the preceding round and selection",await evaluate(`ui.state.cells===${JSON.stringify(roundOne.cells)} && JSON.stringify(ui.state.deductionCells)===${JSON.stringify(JSON.stringify(roundOne.selection))}`));
+  await evaluate(`run('undo')`);
+  check("a second undo restores the board before any deduction",await evaluate(`ui.state.cells===${JSON.stringify(roundStart)} && ui.state.deductionCells.length===0 && !ui.state.canUndo`));
+
   // Hint previews are separate from player marks and survive only that position.
   await evaluate(`send('set size 6')`);
   await evaluate(`generate(42)`);
@@ -1245,7 +1276,7 @@ async function main() {
   await evaluate(`run('hintapply')`);
   const hintAfter=await evaluate(`({cells:ui.state.cells,hint:ui.state.hint,hidden:document.getElementById('hint-card').hidden})`);
   check("applying a hint commits only its conclusions",hintPreview.hint.marks.every(([i,v])=>hintAfter.cells[i]===String(v)) && [...hintAfter.cells].every((v,i)=>v===hintBefore.cells[i] || hintPreview.hint.marks.some(([j])=>j===i)) && !hintAfter.hint && hintAfter.hidden);
-  for(const mark of hintPreview.hint.marks) await evaluate(`run('undo')`);
+  await evaluate(`run('undo')`);
   check("hinted marks can be undone",await evaluate(`ui.state.cells===${JSON.stringify(hintBefore.cells)}`));
   await evaluate(`run('hint')`); await evaluate(`run('hintdismiss')`);
   check("dismissing a hint preserves the board",await evaluate(`!ui.state.hint && ui.state.cells===${JSON.stringify(hintBefore.cells)}`));

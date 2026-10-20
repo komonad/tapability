@@ -107,7 +107,10 @@ The **One step (D)** button reads one immutable board snapshot. It checks
 2x2 squares, mandatory connections between black components and the compatible
 patterns of every clue against that same snapshot. A round may confirm several
 cells, but new marks do not trigger more deductions until the next click. Each
-resulting mark is undoable. Internal difficulty assessment uses a separate
+round is one undoable action. Its changed cells remain selected, including both
+black and white marks. Z restores the whole previous position and its selection;
+manual edits clear the selection. Single-clue steps and applied hints use the
+same grouped undo behavior. Internal difficulty assessment uses a separate
 basic-rule closure that repeats until stable.
 
 ## Controls and settings in the UI
@@ -331,7 +334,7 @@ score; an unfinished reasoning assessment does not imply an invalid puzzle.
 
 Press **H** or **Hint** to preview one next move. The browser displays the
 explanation on the left and highlights its target cells. **Apply hint** commits
-only those conclusions as normal undoable marks. Editing, resetting, undoing or
+only those conclusions as one undoable action. Editing, resetting, undoing or
 replacing a board invalidates the preview. The native H shortcut previews the
 proof in a dialog before applying it.
 

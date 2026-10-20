@@ -31,6 +31,7 @@ const C = {
   wrong: "#d63030",
   win: "#2e9e42",
   highlightOutline: "#ffc448",
+  selectionOutline: "#168f99",
   errorOutline: "#e23434",
   clueText: "#303028",
   clueBad: "#c82020",
@@ -569,6 +570,16 @@ function render() {
     outlineGroup(ctx, highlight, C.highlightOutline, 2);
   }
   outlineGroup(ctx, errors, C.errorOutline, 2);
+
+  if (!showSolution) {
+    for (const i of state.deductionCells || []) {
+      const x=(i%cols)*cell,y=Math.floor(i/cols)*cell;
+      ctx.fillStyle="rgba(22,143,153,0.16)";
+      ctx.fillRect(x+1,y+1,cell-2,cell-2);
+      ctx.strokeStyle=C.selectionOutline; ctx.lineWidth=2;
+      ctx.strokeRect(x+1,y+1,cell-2,cell-2);
+    }
+  }
 
   // hover marker: on a touch screen it stays on the last tapped cell, because
   // there is no cursor to show where the finger was
