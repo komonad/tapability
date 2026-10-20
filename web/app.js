@@ -521,7 +521,7 @@ function render() {
     const crows = Math.ceil(count / ccols);
     const cw = cell / ccols;
     const ch = count === 3 ? cell * 0.4 : cell / crows;
-    const y0 = (cell - ch * crows) / 2;
+    const y0 = count === 3 ? cell * 0.16 : (cell - ch * crows) / 2;
     const bx = (idx % cols) * cell;
     const by = Math.floor(idx / cols) * cell;
     digits.forEach((digit, k) => {
