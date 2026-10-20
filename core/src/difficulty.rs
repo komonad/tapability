@@ -106,6 +106,12 @@ pub fn assess(
     }
 }
 
+/// Keep an absolute workload floor once boards exceed the reference area.
+pub(crate) fn minimum_basic_remaining(grid: &Grid, clue_count: usize) -> usize {
+    let playable = grid.len().saturating_sub(clue_count);
+    (playable * grid.len().min(625)).div_ceil(grid.len().max(1) * 2)
+}
+
 /// Size-normalized structural targets for puzzles with sustained logical work.
 /// Small boards use the solvability gate without a large-board workload floor.
 pub fn meets_quality_target(grid: &Grid, clue_count: usize, assessment: &Assessment) -> bool {
@@ -116,9 +122,9 @@ pub fn meets_quality_target(grid: &Grid, clue_count: usize, assessment: &Assessm
         return true;
     }
     let playable = grid.len().saturating_sub(clue_count);
-    assessment.basic_remaining * 100 >= playable * 50
+    assessment.basic_remaining >= minimum_basic_remaining(grid, clue_count)
         && assessment.basic_remaining * 100 <= playable * 80
-        && assessment.contradiction_steps >= grid.len().div_ceil(25)
+        && assessment.contradiction_steps >= grid.len().min(625).div_ceil(25)
         && assessment.first_forced * 100 >= playable * 3
         && clue_count * 100 >= grid.len() * 12
         && clue_count * 100 <= grid.len() * 23
@@ -172,6 +178,23 @@ mod tests {
         assessment.contradiction_steps = 24;
         assessment.first_forced = 0;
         assert!(!meets_quality_target(&grid, 68, &assessment));
+    }
+
+    #[test]
+    fn large_board_workload_does_not_require_proportional_stalls() {
+        let grid = Grid::new(60, 60);
+        let assessment = Assessment {
+            basic_remaining: 405,
+            first_forced: 600,
+            cells: Vec::new(),
+            remaining: 0,
+            contradiction_steps: 84,
+            probes: 800,
+            exhausted: false,
+            consistent: true,
+        };
+        assert!(meets_quality_target(&grid, 596, &assessment));
+        assert_eq!(minimum_basic_remaining(&Grid::new(25, 25), 110), 258);
     }
 
     #[test]

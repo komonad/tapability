@@ -24,7 +24,7 @@ pub fn print_puzzles(count: usize, settings: &Settings, seed: u64) -> String {
             None => {
                 let _ = writeln!(
                     out,
-                    "seed {this_seed}: no candidate met the quality target within the explicitly enabled limits\n"
+                    "seed {this_seed}: no candidate met the quality target in this search\n"
                 );
             }
             Some(result) => {

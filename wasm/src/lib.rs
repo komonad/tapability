@@ -206,7 +206,7 @@ impl Engine {
                     "generation_failed",
                     &[seed as i64],
                     format!(
-                        "no puzzle met the logical quality target within the explicitly enabled limits (seed {seed})"
+                        "no puzzle met the logical quality target in this search (seed {seed}); the current puzzle is preserved"
                     ),
                 );
             }

@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 pub struct Settings {
     /// Board is `size x size`.
     pub size: usize,
-    /// Enable explicitly configured global generation limits.
+    /// Use explicit compute limits in place of the interactive response window.
     pub limited_generation: bool,
-    /// Number of quality-qualified candidates compared before completion.
+    /// Clue-removal proof effort; small boards also compare multiple candidates.
     pub difficulty: usize,
     /// `None` means "pick a seed from the clock".
     pub seed: Option<u64>,
@@ -28,7 +28,7 @@ pub struct Settings {
     pub node_budget: u64,
     /// Milliseconds for a whole generation.
     pub time_budget_ms: u64,
-    /// Floor for a single uniqueness proof.
+    /// Reference proof-work allowance; large-board slices may use less.
     pub check_min_nodes: u64,
     /// How much a single proof may borrow over its fair share of the pool.
     pub check_slack: u64,
@@ -86,7 +86,7 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
     ),
     (
         "difficulty", "Difficulty effort (1-5)",
-        "Compare candidates that pass logical-path and workload targets. Higher effort compares more qualified puzzles and can take longer.",
+        "Higher effort spends more work simplifying clues. Large boards return the first candidate with a complete logical path and sufficient workload.",
     ),
     (
         "density",
@@ -341,7 +341,7 @@ impl Settings {
 pub const EXAMPLE: &str = "\
 # Tapa generation settings. Every line is optional.
 #   size                  board is size x size (3..60)
-#   difficulty            quality-qualified candidates compared for difficulty (1..5)
+#   difficulty            clue-removal proof effort (1..5)
 #   seed                  fixed seed; omit for a clock-based seed
 #   density               fraction of black cells, LO-HI
 #   max_clueless_fraction reject shapes whose biggest clue-free patch is a
@@ -349,7 +349,7 @@ pub const EXAMPLE: &str = "\
 #   limited_generation    enable explicit global limits (default false)
 #   node_budget           search nodes when limited_generation is true
 #   time_budget_ms        milliseconds when limited_generation is true
-#   check_min_nodes       floor for a single uniqueness proof
+#   check_min_nodes       reference proof-work allowance
 #   check_slack           how much one proof may borrow over its fair share
 #   max_attempts          how many shapes to try before giving up
 #

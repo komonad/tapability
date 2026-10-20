@@ -1198,8 +1198,13 @@ function newSeed() {
 
 async function generate(seed) {
   if (generationTask) return;
-  const task = { worker: createEngineWorker(), cancelled: false };
+  const task = { worker: createEngineWorker(), cancelled: false, watchdog: 0 };
   generationTask = task;
+  task.watchdog = setTimeout(() => {
+    if (generationTask !== task) return;
+    cancelGeneration();
+    setStatus(t("status.generation_timed_out"), "bad");
+  }, 15000);
   const cancel = document.getElementById("btn-cancel-generation");
   cancel.hidden = false;
   setBusy(true, { veil: true });
@@ -1217,6 +1222,7 @@ async function generate(seed) {
   if (!state.fatal && !state.settingsError) state = await sendTo(task.worker, `generate ${seed}`);
   if (task.cancelled) return;
   generationTask = null;
+  clearTimeout(task.watchdog);
   cancel.hidden = true;
   if (!state.fatal && !state.settingsError && state.statusKey !== "generation_failed") {
     const previous = worker;
@@ -1235,6 +1241,7 @@ function cancelGeneration() {
   const task = generationTask;
   if (!task) return;
   task.cancelled = true;
+  clearTimeout(task.watchdog);
   generationTask = null;
   stopWorker(task.worker);
   document.getElementById("btn-cancel-generation").hidden = true;

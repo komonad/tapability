@@ -19,7 +19,7 @@ resized below the control column plus a 3x3 board at 11 pixels per cell.
 cargo run --release                 # play in a Win32 window
 cargo run --release -- --print 1    # print a puzzle + its solution
 cargo run --release -- --bench 20   # time 20 generations
-cargo test --workspace --release    # 54 tests, incl. uniqueness + minimality
+cargo test --workspace --release    # includes uniqueness, deduction soundness and minimality checks
 
 pwsh -File build-web.ps1            # build web/tapa.wasm, then check the ABI
 node tools/serve.cjs                # then open http://127.0.0.1:8080/
@@ -131,11 +131,11 @@ cell-size slider zooms the board immediately without generating a puzzle.
 | setting | default | meaning |
 |---|---|---|
 | `size` | 20 | board is `size x size` (3..60) |
-| `difficulty` | 3 | compare up to 1..5 qualifying logical paths; stop early near the target workload |
+| `difficulty` | 3 | clue-removal proof effort; large boards return the first qualifying path |
 | `seed` | clock | fixed seed; makes generation reproducible |
 | `density` | `0.50-0.60` | approximate target share of black answer cells, chosen randomly within the range; independent of clue density |
 | `max_clueless_fraction` | 0.15 | reject shapes whose biggest clue-free patch exceeds this fraction of the board |
-| `limited_generation` | false | optional CLI/config global limits; hidden from the ordinary control panel |
+| `limited_generation` | false | optional CLI/config compute limits; hidden from the ordinary control panel |
 | `node_budget`, `time_budget_ms`, `max_attempts` | advanced | effective only when `limited_generation = true` |
 
 The same settings can be set from a file or the command line:
@@ -154,18 +154,18 @@ working directory when that is not writable).
 
 ### Optional compute limits
 
-Global limits are **disabled by default**. Generation continues until a
-qualifying logical path is found, and the browser shows candidate progress and
-a Cancel generation button. A generation worker is separate from the current
-game worker; cancelling discards only the candidate search.
+Interactive generation uses a 12-second response window and returns a
+qualifying puzzle immediately on boards of at least 225 cells. The browser has
+an independent 15-second worker watchdog, candidate progress and a Cancel
+button. Timeout and cancellation preserve the current game and undo history.
 
 For explicitly constrained CLI jobs, `--set limited_generation=true` enables
 `node_budget`, `time_budget_ms` and `max_attempts`. With that opt-in, the budget
 is a shared pool: each uniqueness proof
 gets `remaining / proofs left * check_slack` nodes, so one that needs a little
 more than its fair share can still finish. A proof that does run out keeps its
-clue and is retried once at the end with whatever budget is left. Running out of
-budget never breaks uniqueness - it only leaves a redundant clue in place.
+clue. Small boards retry unfinished proofs once at the end of the pass.
+Running out of work never breaks uniqueness; it can leave a redundant clue.
 
 Completion time varies with the requested shape and the number of candidates
 needed to satisfy the workload targets. The browser remains responsive while
@@ -340,40 +340,39 @@ solution *found and proven* (not "aborted by budget") means unique.
    unique solution, the shape is unusable (subsets are only weaker) and a new
    shape is grown.
 3. **minimise each candidate's clues**: drop a clue only after a successful
-   uniqueness proof. Each removal proof is capped at the greater of 30,000
-   nodes and `check_min_nodes`, within its share of the common pool. An aborted
-   proof retains the clue.
+   uniqueness proof. Large-board proofs use short work slices scaled by area
+   and effort; a slower proof retains its clue. Aborted large-board proofs are
+   not retried in the same removal pass.
 4. **repair logical stalls**: assess basic rules and single-cell contradiction
    propagation without recursive search. A stalled candidate can regain up to
    one valid given per 50 board cells to unlock deductions. Givens are selected
-   for context-specific progress, with a penalty for revealing many opening moves. Restoration trials retain the basic-rule
-   workload floor before committing a given. Adding a valid
-   given to a proven unique puzzle preserves its unique solution. The resulting
-   set need not be inclusion-minimal.
+   for context-specific progress, with a penalty for revealing many opening
+   moves. Restoration trials retain the basic-rule workload floor before
+   committing a given. Adding a valid given to a proven unique puzzle preserves
+   its unique solution. The resulting set need not be inclusion-minimal.
 5. **screen the logical path**: every delivered puzzle must have a consistent,
    completed assessment within 12 probes per board cell. For boards of at least
    225 cells, acceptance also requires:
-   - 50–80% of non-clue cells remain undecided after basic rules;
-   - at least one successful contradiction step per 25 board cells;
+   - at least half the non-clue cells, scaled to at most 625 reference cells,
+     remain undecided after basic rules, and no more than 80% remain;
+   - at least one successful contradiction step per 25 reference cells;
    - immediate clue deductions cover at least 3% of non-clue cells;
    - clue cells occupy 12–23% of the board.
-6. **rank qualifying candidates**: prefer a basic-rule bottleneck near 60% and
-   successful contradiction work near 7.7% of board area, then fewer clues.
-   Compare up to `difficulty` qualifying candidates, with early completion near
-   both targets. Continue sampling distinct shapes when a candidate fails.
+6. **deliver a qualifying path**: large boards return the first qualifying
+   puzzle. Effort controls how much proof work each removal receives. Small
+   boards compare up to `difficulty` candidates by workload and clue count.
 
 A completed logical path is checked against the stored unique solution.
-Generation continues until a qualifying candidate is available; it never
-substitutes an unscreened puzzle. Explicitly enabled global limits can return
-a qualifying result found so far or a failure. The browser retains the current
-puzzle and marks when a new generation fails and displays verified path statistics on
-the left after success. Small boards keep the complete-path gate without the
-large-board workload floors.
+Generation never substitutes an unscreened puzzle. When the response window
+expires without a qualifying candidate, the search reports failure. The browser
+retains the current puzzle and marks when a new generation fails and displays
+verified path statistics on the left after success. Small boards keep the
+complete-path gate without the large-board workload floors.
 
 These workload targets describe a limited rule set. They do not measure the
 ability of the full search solver or constitute a calibrated human difficulty
-grade. Fixed seeds are reproducible without wall-clock cutoffs. If optional limits
-include a wall-clock cutoff, it can change which qualifying candidate is available.
+grade. Successful fixed-seed runs are reproducible when the response window
+allows the same work to finish. A timeout can change whether a result is available.
 
 A native assessment example accepts tab-separated puzzle files with four fields:
 width, height, label and `cell=digits;cell=digits` clues. A digit `0` denotes no
@@ -419,12 +418,11 @@ interactive during generation.
 * Initial removal seeks an inclusion-minimal unique clue set. Bounded proofs
   can retain a redundant clue, and logical-path repair can restore givens to
   make the reasoning complete. Final quality takes precedence over clue minimality.
-* Logical-path screening uses a bounded, size-normalized rule set. Some settings
-  can take longer to produce a qualifying puzzle. With optional global limits
-  enabled, generation can report failure. Human difficulty and visual composition
-  still need playtesting.
+* Logical-path screening uses a bounded rule set. Some configurations can fail
+  to produce a qualifying puzzle within the response window. Human difficulty
+  and visual composition still need playtesting.
 * The solver has no clause learning or restarts; individual removal proofs use
-  work slices so one candidate cannot monopolize the search. This does not impose a default deadline on puzzle generation.
+  work slices so one candidate cannot monopolize the search.
 * The desktop build is Windows only (Win32 + GDI). The engine and the browser
   front end are not: they only need `wasm32-unknown-unknown`.
 * The browser build needs a static server; `file://` cannot fetch WebAssembly.

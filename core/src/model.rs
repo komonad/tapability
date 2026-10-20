@@ -8,6 +8,8 @@
 //!   * all black cells are orthogonally connected;
 //!   * no 2x2 block of cells is completely black.
 
+use std::{collections::HashMap, sync::OnceLock};
+
 pub const UNKNOWN: u8 = 0;
 pub const BLACK: u8 = 1;
 pub const WHITE: u8 = 2;
@@ -145,14 +147,28 @@ fn matches_rotation(runs: &[u8], clue: &[u8]) -> bool {
 
 /// All neighbour masks that satisfy a clue.
 pub fn clue_masks(clue: &[u8]) -> Vec<u8> {
-    if clue.is_empty() {
-        // A clue without numbers means "no black neighbour at all".
-        return vec![0];
-    }
-    (0u16..256)
-        .map(|m| m as u8)
-        .filter(|&m| matches_rotation(&runs_clockwise(m), clue))
-        .collect()
+    static PATTERNS: OnceLock<HashMap<Clue, Vec<u8>>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        let mut patterns = HashMap::<Clue, Vec<u8>>::new();
+        for mask in 0u16..256 {
+            let runs = runs_clockwise(mask as u8);
+            for offset in 0..runs.len().max(1) {
+                let key: Clue = runs
+                    .iter()
+                    .cycle()
+                    .skip(offset)
+                    .take(runs.len())
+                    .copied()
+                    .collect();
+                let entry = patterns.entry(key).or_default();
+                if entry.last() != Some(&(mask as u8)) {
+                    entry.push(mask as u8);
+                }
+            }
+        }
+        patterns
+    });
+    patterns.get(clue).cloned().unwrap_or_default()
 }
 
 /// Is `clue` a legal clue at all?
@@ -401,51 +417,67 @@ pub fn one_step_deductions(grid: &Grid, marks: &[u8], clues: &[(usize, Clue)]) -
 }
 
 /// Unknown vertices whose removal separates existing black cells are mandatory.
-fn connection_bridges(grid: &Grid, state: &[u8]) -> Vec<usize> {
-    let blacks: Vec<usize> = (0..state.len()).filter(|&i| state[i] == BLACK).collect();
-    if blacks.len() < 2 {
+pub(crate) fn connection_bridges(grid: &Grid, state: &[u8]) -> Vec<usize> {
+    let total_black = state.iter().filter(|&&cell| cell == BLACK).count();
+    if total_black < 2 {
         return Vec::new();
     }
-    let mut seen = vec![false; state.len()];
-    let mut stack = Vec::with_capacity(state.len());
-    let mut connected_without = |blocked: usize| {
-        seen.fill(false);
-        stack.clear();
-        stack.push(blacks[0]);
-        seen[blacks[0]] = true;
-        let mut reached = 0;
-        while let Some(cell) = stack.pop() {
-            if state[cell] == BLACK {
-                reached += 1;
+    let root = state.iter().position(|&cell| cell == BLACK).unwrap();
+    let n = state.len();
+    let mut entered = vec![usize::MAX; n];
+    let mut low = vec![0; n];
+    let mut parent = vec![usize::MAX; n];
+    let mut next_neighbor = vec![0; n];
+    let mut black_below = vec![0; n];
+    let mut required = vec![false; n];
+    let mut stack = Vec::with_capacity(n);
+    entered[root] = 0;
+    black_below[root] = 1;
+    stack.push(root);
+    let mut clock = 1;
+    while let Some(&cell) = stack.last() {
+        if next_neighbor[cell] < 4 {
+            let direction = next_neighbor[cell];
+            next_neighbor[cell] += 1;
+            let Some(nb) = grid.ortho(cell)[direction] else {
+                continue;
+            };
+            if state[nb] == WHITE || nb == parent[cell] {
+                continue;
             }
-            if reached == blacks.len() {
-                return true;
+            if entered[nb] == usize::MAX {
+                parent[nb] = cell;
+                entered[nb] = clock;
+                low[nb] = clock;
+                clock += 1;
+                black_below[nb] = usize::from(state[nb] == BLACK);
+                stack.push(nb);
+            } else {
+                low[cell] = low[cell].min(entered[nb]);
             }
-            for &nb in grid.ortho(cell).iter().flatten() {
-                if nb != blocked && state[nb] != WHITE && !seen[nb] {
-                    seen[nb] = true;
-                    stack.push(nb);
+        } else {
+            stack.pop();
+            let previous = parent[cell];
+            if previous != usize::MAX {
+                // The black root remains outside every separated child subtree.
+                if state[previous] == UNKNOWN
+                    && low[cell] >= entered[previous]
+                    && black_below[cell] > 0
+                {
+                    required[previous] = true;
                 }
+                low[previous] = low[previous].min(low[cell]);
+                black_below[previous] += black_below[cell];
             }
         }
-        false
-    };
-    // Disconnected input cannot justify any bridge assignment.
-    if !connected_without(usize::MAX) {
+    }
+    if black_below[root] != total_black {
         return Vec::new();
     }
-    (0..state.len())
-        .filter(|&i| {
-            state[i] == UNKNOWN
-                && grid
-                    .ortho(i)
-                    .iter()
-                    .flatten()
-                    .filter(|&&j| state[j] != WHITE)
-                    .count()
-                    >= 2
-                && !connected_without(i)
-        })
+    required
+        .into_iter()
+        .enumerate()
+        .filter_map(|(cell, required)| required.then_some(cell))
         .collect()
 }
 
@@ -814,6 +846,82 @@ mod tests {
         // a 3-run (8 places) plus an isolated black (3 legal places)
         assert_eq!(clue_masks(&[3, 1]).len(), 24);
         assert!(clue_masks(&[1, 2]).contains(&0b0000_1101));
+    }
+
+    #[test]
+    fn cached_patterns_match_cyclic_runs() {
+        for mask in 0u16..256 {
+            let runs = runs_clockwise(mask as u8);
+            for offset in 0..runs.len().max(1) {
+                let clue: Clue = runs
+                    .iter()
+                    .cycle()
+                    .skip(offset)
+                    .take(runs.len())
+                    .copied()
+                    .collect();
+                let expected: Vec<u8> = (0u16..256)
+                    .map(|m| m as u8)
+                    .filter(|&m| matches_rotation(&runs_clockwise(m), &clue))
+                    .collect();
+                assert_eq!(clue_masks(&clue), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn bridge_analysis_matches_vertex_removal_on_every_three_by_three_state() {
+        let grid = Grid::new(3, 3);
+        for encoded in 0..3usize.pow(9) {
+            let mut rest = encoded;
+            let mut marks = vec![UNKNOWN; 9];
+            for mark in &mut marks {
+                *mark = (rest % 3) as u8;
+                rest /= 3;
+            }
+            let blacks: Vec<_> = (0..9).filter(|&i| marks[i] == BLACK).collect();
+            let connected = |blocked: usize| {
+                let Some(&root) = blacks.first() else {
+                    return true;
+                };
+                let mut seen = [false; 9];
+                let mut stack = vec![root];
+                seen[root] = true;
+                while let Some(cell) = stack.pop() {
+                    for &nb in grid.ortho(cell).iter().flatten() {
+                        if nb != blocked && marks[nb] != WHITE && !seen[nb] {
+                            seen[nb] = true;
+                            stack.push(nb);
+                        }
+                    }
+                }
+                blacks.iter().all(|&i| seen[i])
+            };
+            let expected: Vec<_> = if blacks.len() >= 2 && connected(usize::MAX) {
+                (0..9)
+                    .filter(|&i| marks[i] == UNKNOWN && !connected(i))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            assert_eq!(
+                connection_bridges(&grid, &marks),
+                expected,
+                "state {encoded}"
+            );
+        }
+    }
+
+    #[test]
+    fn bridge_analysis_handles_long_corridors_without_recursion() {
+        let grid = Grid::new(3600, 1);
+        let mut marks = vec![UNKNOWN; grid.len()];
+        marks[0] = BLACK;
+        marks[3599] = BLACK;
+        assert_eq!(
+            connection_bridges(&grid, &marks),
+            (1..3599).collect::<Vec<_>>()
+        );
     }
 
     #[test]

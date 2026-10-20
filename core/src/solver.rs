@@ -10,34 +10,15 @@
 //!      orthogonal components; the black cells must all end up in one of them,
 //!      so as soon as one component holds a black cell every other component is
 //!      forced white;
-//!   5. a black cell that can never reach another black cell is a contradiction.
+//!   5. mandatory connecting vertices become black before branching.
 //!
 //! The set of neighbour masks that survive for a clue is kept as a 256-bit
 //! bitset, so "which masks still fit" is a handful of AND instructions instead
 //! of a loop over up to 32 patterns. Buffers used by the component analysis are
 //! allocated once per solve instead of once per propagation.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-
 use crate::clock::now_ms;
-use crate::model::{clue_masks, Clue, Grid, BLACK, UNKNOWN, WHITE};
-
-/// Cache of clue -> neighbour masks. Clues repeat a lot across solver instances.
-fn mask_cache() -> &'static Mutex<HashMap<Clue, Vec<u8>>> {
-    static CACHE: OnceLock<Mutex<HashMap<Clue, Vec<u8>>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn cached_masks(clue: &[u8]) -> Vec<u8> {
-    let mut cache = mask_cache().lock().unwrap();
-    if let Some(m) = cache.get(clue) {
-        return m.clone();
-    }
-    let m = clue_masks(clue);
-    cache.insert(clue.to_vec(), m.clone());
-    m
-}
+use crate::model::{clue_masks, connection_bridges, Clue, Grid, BLACK, UNKNOWN, WHITE};
 
 /// A set of neighbour masks: bit `m` of the 256-bit number means "mask m is
 /// still possible".
@@ -192,7 +173,7 @@ impl Solver {
             let neighbors = grid.neighbors(*idx);
             // A cell outside the grid is never black, so drop every mask that
             // would require one.
-            let feasible: Vec<u8> = cached_masks(clue)
+            let feasible: Vec<u8> = clue_masks(clue)
                 .into_iter()
                 .filter(|m| (0..8).all(|k| neighbors[k].is_some() || m & (1 << k) == 0))
                 .collect();
@@ -527,7 +508,15 @@ impl Solver {
             }
 
             if !changed {
-                return true;
+                let bridges = connection_bridges(&self.grid, state);
+                if bridges.is_empty() {
+                    return true;
+                }
+                for cell in bridges {
+                    state[cell] = BLACK;
+                    scratch.new_blacks.push(cell);
+                    scratch.pending_blacks.push(cell);
+                }
             }
         }
     }
@@ -673,6 +662,63 @@ mod tests {
         assert_eq!(result.solutions[0], vec![BLACK, BLACK, BLACK]);
         let result = solver.solve(&[BLACK, WHITE, BLACK], &SolveLimits::unique_check(None));
         assert!(result.solutions.is_empty());
+    }
+
+    #[test]
+    fn search_solutions_match_exhaustive_boards() {
+        use crate::{model::validate, rng::Rng};
+        let grid = Grid::new(3, 3);
+        let boards: Vec<Vec<u8>> = (0..512)
+            .map(|mask| {
+                (0..9)
+                    .map(|cell| {
+                        if mask & (1 << cell) != 0 {
+                            BLACK
+                        } else {
+                            WHITE
+                        }
+                    })
+                    .collect::<Vec<u8>>()
+            })
+            .filter(|board| validate(&grid, board, &[]).is_empty())
+            .collect();
+        let mut rng = Rng::new(17);
+        for _ in 0..32 {
+            let solution = &boards[rng.below(boards.len())];
+            let clues: Vec<_> = (0..9)
+                .filter(|&i| solution[i] == WHITE && rng.below(2) == 0)
+                .map(|i| (i, clue_of(solution, &grid, i)))
+                .collect();
+            let mut marks = vec![UNKNOWN; 9];
+            for _ in 0..2 {
+                let cell = rng.below(9);
+                marks[cell] = solution[cell];
+            }
+            let mut expected: Vec<_> = boards
+                .iter()
+                .filter(|board| {
+                    marks
+                        .iter()
+                        .zip(board.iter())
+                        .all(|(&mark, &value)| mark == UNKNOWN || mark == value)
+                        && validate(&grid, board, &clues).is_empty()
+                })
+                .cloned()
+                .collect();
+            let solver = Solver::new(grid.clone(), &clues);
+            let mut actual = solver.solve(
+                &marks,
+                &SolveLimits {
+                    max_solutions: 512,
+                    deadline: None,
+                    max_nodes: u64::MAX,
+                },
+            );
+            assert!(!actual.aborted);
+            actual.solutions.sort();
+            expected.sort();
+            assert_eq!(actual.solutions, expected);
+        }
     }
 
     #[test]

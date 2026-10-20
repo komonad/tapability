@@ -12,7 +12,7 @@
 //!      after a successful uniqueness proof;
 //!   5. restore valid givens when they unlock a stalled logical path;
 //!   6. screen completed logical paths against size-normalized workload targets
-//!      and rank qualifying candidates by distance to the target workload.
+//!      and return a qualifying puzzle.
 //!
 //! Every accepted puzzle is therefore guaranteed to have exactly one solution,
 //! and that solution is the shape the generator started from.
@@ -45,7 +45,7 @@ pub struct GenConfig {
     pub node_budget: u64,
     /// Time for the whole generation, shared adaptively between proofs.
     pub time_budget: Duration,
-    /// Floor for a single uniqueness proof, so a cheap check is never starved.
+    /// Reference proof-work allowance; large-board slices may use less.
     pub check_min_nodes: u64,
     /// How much a single proof may borrow over its fair share of the pool.
     pub check_slack: u64,
@@ -145,7 +145,7 @@ impl GenConfig {
             time_budget: if settings.limited_generation {
                 Duration::from_millis(settings.time_budget_ms)
             } else {
-                Duration::ZERO
+                Duration::from_secs(12)
             },
             check_min_nodes: settings.check_min_nodes,
             check_slack: settings.check_slack,
@@ -236,7 +236,9 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         // that cannot be pinned down quickly is dropped instead of burning time.
         let start = vec![UNKNOWN; n];
         let mut shape_limits = budget.share(10);
-        shape_limits.max_nodes = shape_limits.max_nodes.min(60_000.max(cfg.check_min_nodes));
+        shape_limits.max_nodes = shape_limits
+            .max_nodes
+            .min(cfg.check_min_nodes.saturating_mul(2));
         let solver = Solver::new(grid.clone(), &candidates);
         let t0 = Timer::start();
         let outcome = solver.solve(&start, &shape_limits);
@@ -256,7 +258,11 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         // the intermediate puzzles are dense, so refuting them is quick, while
         // the adding direction spends its time on near-unique puzzles, which is
         // exactly where the search is expensive.
-        let remaining_candidates = cfg.difficulty.max(1).saturating_sub(accepted).max(1) as u64;
+        let remaining_candidates = if n >= 225 {
+            1
+        } else {
+            cfg.difficulty.max(1).saturating_sub(accepted).max(1) as u64
+        };
         let candidate_deadline = budget.deadline.map(|end| {
             let now = now_ms();
             now + (end - now).max(0.0) / remaining_candidates as f64
@@ -328,7 +334,7 @@ pub fn generate_with(rng: &mut Rng, cfg: &GenConfig) -> Option<GenResult> {
         }
         accepted += 1;
         generation_progress(attempts, accepted);
-        if accepted >= cfg.difficulty.max(1) || (score.0 >= 980 && score.1 >= 975) {
+        if n >= 225 || accepted >= cfg.difficulty.max(1) || (score.0 >= 980 && score.1 >= 975) {
             break;
         }
     }
@@ -364,7 +370,9 @@ fn repair_logical_path(
         let playable = grid.len().saturating_sub(clues.len());
         let basic_remaining =
             playable.saturating_sub(one_step_deductions(grid, &opening, clues).len());
-        if grid.len() >= 225 && basic_remaining * 100 < playable * 50 {
+        if grid.len() >= 225
+            && basic_remaining < difficulty::minimum_basic_remaining(grid, clues.len())
+        {
             return None;
         }
         let assessment = difficulty::assess(grid, clues, grid.len() * 12, deadline);
@@ -374,10 +382,9 @@ fn repair_logical_path(
         if assessment.solved() {
             return Some((assessment, restored));
         }
-        let playable = grid.len().saturating_sub(clues.len());
         if grid.len() < 225
             || restored >= grid.len().div_ceil(50)
-            || assessment.basic_remaining * 100 < playable * 50
+            || assessment.basic_remaining < difficulty::minimum_basic_remaining(grid, clues.len())
         {
             return None;
         }
@@ -412,7 +419,7 @@ fn repair_logical_path(
             let free = grid.len().saturating_sub(trial.len());
             let unresolved =
                 free.saturating_sub(one_step_deductions(grid, &trial_opening, &trial).len());
-            if unresolved * 100 >= free * 50 {
+            if unresolved >= difficulty::minimum_basic_remaining(grid, trial.len()) {
                 chosen = Some((cell, clue));
                 break;
             }
@@ -450,15 +457,9 @@ fn blank_region(grid: &Grid, solution: &[u8], clues: &[(usize, Clue)]) -> usize 
     largest_blank_region(grid, solution, &is_clue)
 }
 
-/// One greedy pass over the clue candidates in random order: a clue is dropped
-/// whenever the puzzle still has exactly one solution. Because every kept clue
-/// was tested against a superset of the final clue set, the result is
-/// *inclusion-minimal* - no single clue of it can be removed any more.
-///
-/// Each proof draws an adaptive share of the shared budget. A proof that runs
-/// out is not judged for good: the clue stays in and is retried once at the end
-/// with whatever budget is left, so a near miss is not treated like a hopeless
-/// case.
+/// One greedy pass removes a clue only after a complete uniqueness proof.
+/// Unfinished proofs retain their clues. Small boards retry aborted proofs
+/// once; large boards continue to the next clue.
 ///
 /// Returns the kept clues, how many were removed, the nodes used and the time
 /// spent inside the solver.
@@ -470,6 +471,15 @@ fn minimise(
     rng: &mut Rng,
     budget: &mut Budget,
 ) -> (Vec<(usize, Clue)>, usize, u64, Duration, usize, u64) {
+    let proof_work = if grid.len() < 225 {
+        30_000.max(cfg.check_min_nodes)
+    } else {
+        let base = 256u64 << cfg.difficulty.clamp(1, 5).saturating_sub(1);
+        let area = grid.len().max(625) as u64;
+        (base * 625 * 625 / area / area)
+            .max(64)
+            .min(cfg.check_min_nodes)
+    };
     let mut keep = vec![true; candidates.len()];
     let mut order: Vec<usize> = (0..candidates.len()).collect();
     rng.shuffle(&mut order);
@@ -505,8 +515,11 @@ fn minimise(
             let solver = Solver::new(grid.clone(), &trial);
             let t0 = Timer::start();
             let mut limits = budget.share(left + 1);
+            if grid.len() >= 225 {
+                limits.deadline = budget.deadline;
+            }
             // Preserve the pool for independent candidates when one removal is expensive.
-            limits.max_nodes = limits.max_nodes.min(30_000.max(cfg.check_min_nodes));
+            limits.max_nodes = limits.max_nodes.min(proof_work);
             let outcome = solver.solve(start, &limits);
             solve_time += t0.elapsed();
             nodes += outcome.nodes;
@@ -517,7 +530,7 @@ fn minimise(
                 removals += 1;
             } else {
                 keep[i] = true;
-                if outcome.aborted && round == 0 {
+                if outcome.aborted && round == 0 && grid.len() < 225 {
                     retry.push(i);
                 }
             }
@@ -526,8 +539,15 @@ fn minimise(
             break;
         }
     }
-    let _ = cfg;
-    finish(candidates, keep, removals, nodes, solve_time, checks, max_check_nodes)
+    finish(
+        candidates,
+        keep,
+        removals,
+        nodes,
+        solve_time,
+        checks,
+        max_check_nodes,
+    )
 }
 
 fn finish(
@@ -820,14 +840,14 @@ mod tests {
     }
 
     #[test]
-    fn global_limits_are_explicitly_opt_in() {
+    fn interactive_search_keeps_a_response_deadline() {
         let mut settings = Settings::default();
         settings.node_budget = 1;
         settings.time_budget_ms = 1;
         settings.max_attempts = 1;
         let cfg = GenConfig::from_settings(&settings);
         assert_eq!(cfg.node_budget, u64::MAX);
-        assert!(cfg.time_budget.is_zero());
+        assert_eq!(cfg.time_budget, Duration::from_secs(12));
         assert_eq!(cfg.max_attempts, usize::MAX);
         settings.limited_generation = true;
         let cfg = GenConfig::from_settings(&settings);

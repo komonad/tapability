@@ -1246,6 +1246,23 @@ async function main() {
   check("ordinary settings do not expose resource caps", await evaluate(`!document.querySelector('input[data-key=node_budget],input[data-key=time_budget_ms],input[data-key=max_attempts]')`));
   check("generated puzzles carry a verified logical path", await evaluate(`ui.state.genStats.qualityVerified === true`));
 
+  const beforeWatchdog = await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,undo:ui.state.canUndo})`);
+  await evaluate(`(() => {
+    const original = createEngineWorker;
+    const url = URL.createObjectURL(new Blob(['self.onmessage = () => {};'], {type:'text/javascript'}));
+    createEngineWorker = () => new Worker(url);
+    void generate(${beforeWatchdog.seed + 1});
+    createEngineWorker = original;
+    window.watchdogTestUrl = url;
+  })()`);
+  await waitFor(`!ui.busy && !generationTask && document.getElementById('status').textContent === t('status.generation_timed_out')`, "the worker watchdog ends an unresponsive search", 20000);
+  const afterWatchdog = await evaluate(`({cells:ui.state.cells,seed:ui.state.seed,undo:ui.state.canUndo})`);
+  check("the worker watchdog preserves the current game",
+    beforeWatchdog.cells === afterWatchdog.cells && beforeWatchdog.seed === afterWatchdog.seed && beforeWatchdog.undo === afterWatchdog.undo,
+    JSON.stringify(afterWatchdog));
+  check("the worker watchdog releases pending requests", await evaluate(`waiting.size === 0 && requestOwners.size === 0`));
+  await evaluate(`URL.revokeObjectURL(window.watchdogTestUrl)`);
+
   // ---- no stray JavaScript errors ----------------------------------------
   check("no uncaught JavaScript errors", consoleErrors.length === 0, consoleErrors.join(" | "));
 
